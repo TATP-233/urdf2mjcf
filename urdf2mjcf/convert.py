@@ -842,8 +842,8 @@ def convert_urdf_to_mjcf(
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     add_floor(mjcf_path)
     add_light(mjcf_path)
-    update_mesh(mjcf_path)
     convex_decomposition(mjcf_path)
+    # update_mesh(mjcf_path)
     check_shell_meshes(mjcf_path)
 
     # Apply post-processing steps

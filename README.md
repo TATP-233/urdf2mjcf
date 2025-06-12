@@ -6,12 +6,12 @@
 
 ## ✨ 特色功能
 
-- 🔄 **智能包路径解析**：支持ROS workspace自动检测，兼容嵌套包结构
+- 🔄 **跨平台**：和mujoco一样，支持linux/windows/macos!
+- 🔍 **智能包路径解析**：支持ROS workspace/package自动检测，兼容嵌套包结构
+- 🎨 **材质处理**：支持OBJ+MTL材质自动导入和处理
 - 🎯 **凸分解处理**：自动对collision mesh进行凸分解，提高仿真效率
 - 🏗️ **网格简化**：自动简化高多边形网格，优化性能
-- 🔍 **Shell检测**：自动检测共面mesh并标记为shell，提高仿真精度
-- 🎨 **材质处理**：支持OBJ+MTL材质自动导入和处理
-- 📦 **多格式支持**：支持STL、OBJ等多种mesh格式
+- 📦 **多格式支持**：支持STL、OBJ等多种mesh格式，自动拷贝模型文件
 
 ## 🚀 安装
 
@@ -27,7 +27,7 @@
 
 1. 克隆仓库：
 ```bash
-git clone https://github.com/your-username/urdf2mjcf.git
+git clone https://github.com/TATP-233/urdf2mjcf.git
 cd urdf2mjcf
 ```
 
@@ -36,7 +36,7 @@ cd urdf2mjcf
 pip install -r requirements.txt
 ```
 
-3. 安装包（开发模式）：
+3. 安装包：
 ```bash
 pip install -e .
 ```
@@ -108,14 +108,7 @@ convert_urdf_to_mjcf(
 - **智能比例**：基于网格复杂度动态调整简化比例
 - **质量保持**：使用二次误差度量算法保持几何特征
 
-### 4. Shell检测
-
-- **共面检测**：自动检测mesh顶点是否全部共面
-- **Shell标记**：为平面mesh添加`inertia="shell"`属性，支持mujoco3.3.2+新特性
-- **数学精确**：使用严格的几何算法判断共面性
-- **性能优化**：Shell设置能显著提高仿真效率
-
-### 5. 材质处理
+### 4. 材质处理
 
 - **OBJ+MTL支持**：自动处理OBJ文件的MTL材质
 - **材质分离**：支持按材质分离mesh子对象
