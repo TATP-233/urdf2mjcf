@@ -482,7 +482,14 @@ def convert_urdf_to_mjcf(
                         except:
                             original_obj_file = None
                     else:
-                        original_obj_file = urdf_dir / mesh_assets.get(geom.mesh, geom.mesh)
+                        # For non-package paths, resolve relative to URDF directory
+                        obj_filename = mesh_assets.get(geom.mesh, geom.mesh)
+                        if obj_filename.startswith('/'):
+                            # Absolute path
+                            original_obj_file = Path(obj_filename)
+                        else:
+                            # Relative path - relative to URDF file directory
+                            original_obj_file = urdf_dir / obj_filename
                     
                     if original_obj_file and original_obj_file.exists():
                         obj_target_dir = original_obj_file.parent / obj_name
@@ -644,7 +651,13 @@ def convert_urdf_to_mjcf(
                                 except:
                                     pass
                             else:
-                                obj_paths_to_try.append(urdf_dir / obj_filename)
+                                # For non-package paths, resolve relative to URDF directory
+                                if obj_filename.startswith('/'):
+                                    # Absolute path
+                                    obj_paths_to_try.append(Path(obj_filename))
+                                else:
+                                    # Relative path - relative to URDF file directory
+                                    obj_paths_to_try.append(urdf_dir / obj_filename)
                         
                         # Also try the copied/processed version
                         obj_name = Path(geom.mesh).stem
@@ -774,7 +787,7 @@ def convert_urdf_to_mjcf(
         asset_elem = ET.SubElement(mjcf_root, "asset")
     for mesh_name, filename in mesh_assets.items():
         # Clean up package:// paths to relative paths
-        if "package://" in filename:
+        if 'package://' in filename:
             # Extract the relative path after package name
             package_path = filename[len('package://'):]
             parts = package_path.split('/')
@@ -798,51 +811,146 @@ def convert_urdf_to_mjcf(
     
     for mesh_name, filename in mesh_assets.items():
         # Skip files that have been processed and are already in the correct subdirectory structure
-        if not filename.startswith("package://") and ('/' in filename):
+        if not filename.startswith('package://') and ('/' in filename):
             # This file has been processed and placed in subdirectory structure, skip copying to root
             continue
             
-        source_path: Path = (urdf_dir / filename).resolve()
-        if not source_path.exists():
-            if "package://" in filename:
-                # Extract package name and relative path from package URL
-                package_path = filename[len('package://'):]
-                pkg_mesh_name = package_path.split('/')[0]
-                sub_path = '/'.join(package_path.split('/')[1:])
-                # Use package_resolver to find the package path
-                try:
-                    pkg_root = resolve_package_path(pkg_mesh_name, workspace_search_paths)
-                    if pkg_root:
-                        source_path = pkg_root / sub_path
-                    else:
-                        source_path = None
-                except:
+        # Determine source path based on whether it's a package:// URL or regular path
+        source_path: Path | None = None
+        target_path: Path | None = None
+        
+        if 'package://' in filename:
+            # Extract package name and relative path from package URL
+            package_path = filename[len('package://'):]
+            pkg_mesh_name = package_path.split('/')[0]
+            sub_path = '/'.join(package_path.split('/')[1:])
+            # Use package_resolver to find the package path
+            try:
+                pkg_root = resolve_package_path(pkg_mesh_name, workspace_search_paths)
+                if pkg_root:
+                    source_path = pkg_root / sub_path
+                else:
                     source_path = None
-                target_path: Path = target_mesh_dir / sub_path
-                if not target_path.parent.exists():
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                # Only copy if we haven't processed this file already
-                if str(target_path) not in processed_files:
-                    if source_path != target_path and source_path is not None and source_path.exists():
+            except:
+                source_path = None
+            target_path = target_mesh_dir / sub_path
+        else:
+            # For non-package paths, try to resolve relative to URDF directory
+            if filename.startswith('/'):
+                # Absolute path
+                source_path = Path(filename)
+            else:
+                # Relative path - relative to URDF file directory
+                source_path = (urdf_dir / filename).resolve()
+            
+            # If the path doesn't exist, log a warning but continue
+            if source_path and not source_path.exists():
+                logger.warning(f"Mesh file not found: {source_path} (from URDF path: {filename})")
+                continue
+                
+            target_path = target_mesh_dir / Path(filename).name
+        
+        # Copy the file if source exists and target is valid
+        if source_path and target_path and source_path.exists():
+            if not target_path.parent.exists():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+            # Only copy if we haven't processed this file already
+            if str(target_path) not in processed_files:
+                if source_path != target_path:
+                    try:
                         shutil.copy2(source_path, target_path)
                         processed_files.add(str(target_path))
-                else:
-                    continue  # Skip if rospkg not available
-            else:
-                continue  # Skip if file doesn't exist and not a package path
-        else:
-            # This is for original mesh files that haven't been processed
-            target_path: Path = target_mesh_dir / Path(filename).name
-            if str(target_path) not in processed_files:
-                if source_path != target_path and source_path is not None and source_path.exists():
-                    shutil.copy2(source_path, target_path)
-                    processed_files.add(str(target_path))
+                        logger.debug(f"Copied mesh file: {source_path} -> {target_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to copy mesh file {source_path} to {target_path}: {e}")
+        elif source_path:
+            logger.warning(f"Mesh file not found: {source_path}")
 
     # Save the initial MJCF file
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     add_floor(mjcf_path)
     add_light(mjcf_path)
-    convex_decomposition(mjcf_path)
+    convex_decomposition(mjcf_path, urdf_dir=urdf_path.parent)
+    
+    # After convex decomposition, we need to copy any newly generated mesh files
+    # Re-parse the MJCF file to get the updated mesh assets
+    logger.info("Copying any newly generated mesh files after post-processing...")
+    updated_tree = ET.parse(mjcf_path)
+    updated_root = updated_tree.getroot()
+    updated_asset_elem = updated_root.find("asset")
+    
+    if updated_asset_elem is not None:
+        copied_files = set()  # Track copied files to avoid duplicates
+        
+        for mesh_elem in updated_asset_elem.findall("mesh"):
+            mesh_name = mesh_elem.get("name", "")
+            mesh_file = mesh_elem.get("file", "")
+            
+            if not mesh_file:
+                continue
+            
+            target_path = target_mesh_dir / mesh_file
+            
+            # Skip if already copied or target already exists
+            if str(target_path) in copied_files or target_path.exists():
+                continue
+            
+            # Try to find the source file
+            source_path = None
+            
+            if mesh_file.startswith('package://'):
+                # Handle package:// paths
+                package_path = mesh_file[len('package://'):]
+                pkg_name = package_path.split('/')[0]
+                sub_path = '/'.join(package_path.split('/')[1:])
+                try:
+                    pkg_root = resolve_package_path(pkg_name, workspace_search_paths)
+                    if pkg_root:
+                        source_path = pkg_root / sub_path
+                except:
+                    source_path = None
+            else:
+                # For regular paths, try different locations in order
+                if Path(mesh_file).is_absolute():
+                    source_path = Path(mesh_file)
+                else:
+                    # Try multiple potential source locations
+                    potential_sources = [
+                        urdf_dir / mesh_file,  # Relative to URDF directory
+                        mjcf_path.parent / mesh_file,  # Relative to MJCF directory (might already be copied)
+                    ]
+                    
+                    # Also try looking in subdirectories based on the mesh structure
+                    # For files like "meshes/visual/right_arm/right_arm_link3/obj/right_arm_link3.obj"
+                    # we might need to look in the original URDF structure
+                    mesh_path = Path(mesh_file)
+                    if len(mesh_path.parts) > 1:
+                        # Try the original mesh structure relative to URDF
+                        potential_sources.append(urdf_dir / mesh_file)
+                        # Also try without the first directory component (in case "meshes" is redundant)
+                        if mesh_path.parts[0] == "meshes" and len(mesh_path.parts) > 1:
+                            relative_path = Path(*mesh_path.parts[1:])
+                            potential_sources.append(urdf_dir / relative_path)
+                    
+                    for potential_source in potential_sources:
+                        if potential_source.exists():
+                            source_path = potential_source
+                            break
+            
+            # Copy the file if source exists
+            if source_path and source_path.exists():
+                try:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_path, target_path)
+                    copied_files.add(str(target_path))
+                    logger.debug(f"Copied mesh file: {source_path} -> {target_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to copy mesh file {source_path} to {target_path}: {e}")
+            else:
+                logger.warning(f"Could not find source file for mesh: {mesh_file}")
+        
+        logger.info(f"Copied {len(copied_files)} mesh files after post-processing")
+    
     # update_mesh(mjcf_path)
     check_shell_meshes(mjcf_path)
 

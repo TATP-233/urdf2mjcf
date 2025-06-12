@@ -13,21 +13,42 @@ from urdf2mjcf.utils import save_xml
 logger = logging.getLogger(__name__)
 
 
-def process_single_mesh(mesh_info: Tuple[str, str, Path]) -> Optional[Tuple[str, List[Tuple[str, str]]]]:
+def process_single_mesh(mesh_info: Tuple[str, str, Path, Path, list]) -> Optional[Tuple[str, List[Tuple[str, str]]]]:
     """处理单个mesh的凸分解。
     
     Args:
-        mesh_info: (mesh_name, mesh_file_path, dir_path)的元组
+        mesh_info: (mesh_name, mesh_file_path, dir_path, urdf_dir, workspace_search_paths)的元组
         
     Returns:
         如果成功处理，返回(mesh_name, [(part_name, part_file), ...])
         如果处理失败或无需处理，返回None
     """
-    mesh_name, mesh_file_relative, dir_path = mesh_info
-    mesh_file = dir_path / mesh_file_relative
+    mesh_name, mesh_file_relative, dir_path, urdf_dir, workspace_search_paths = mesh_info
     
-    if not mesh_file.exists():
-        logger.warning(f"Mesh file {mesh_file_relative} does not exist.")
+    # 正确解析mesh文件路径
+    mesh_file = None
+    if mesh_file_relative.startswith('package://'):
+        # Handle package:// paths
+        package_path = mesh_file_relative[len('package://'):]
+        pkg_name = package_path.split('/')[0]
+        sub_path = '/'.join(package_path.split('/')[1:])
+        
+        try:
+            from urdf2mjcf.package_resolver import resolve_package_path
+            pkg_root = resolve_package_path(pkg_name, workspace_search_paths)
+            if pkg_root:
+                mesh_file = pkg_root / sub_path
+        except (ImportError, Exception) as e:
+            logger.warning(f"Could not resolve package path {mesh_file_relative}: {e}")
+    else:
+        # Handle regular paths (relative to URDF file or absolute)
+        if Path(mesh_file_relative).is_absolute():
+            mesh_file = Path(mesh_file_relative)
+        else:
+            mesh_file = urdf_dir / mesh_file_relative
+    
+    if mesh_file is None or not mesh_file.exists():
+        logger.warning(f"Mesh file {mesh_file_relative} does not exist at {mesh_file}.")
         return None
     
     logger.info(f"Processing mesh {mesh_name} for convex decomposition")
@@ -84,20 +105,49 @@ def process_single_mesh(mesh_info: Tuple[str, str, Path]) -> Optional[Tuple[str,
         return None
 
 
-def convex_decomposition_assets(mjcf_path: str | Path, root: ET.Element, max_processes: Optional[int] = None) -> None:
+def convex_decomposition_assets(mjcf_path: str | Path, root: ET.Element, max_processes: Optional[int] = None, urdf_dir: Optional[Path] = None) -> None:
     """对 MJCF 文件中 collision 类型的 geom 进行凸分解。
 
     Args:
         mjcf_path: MJCF 文件的路径
         root: MJCF 文件的根元素
         max_processes: 最大进程数，如果为None则自动计算为CPU核心数-4
+        urdf_dir: URDF文件所在目录，如果为None则假设与MJCF文件在同一目录
     """
+    mjcf_path = Path(mjcf_path)
     compiler = root.find("compiler")
     if compiler is None:
         compiler = ET.SubElement(root, "compiler")
     compiler.attrib["meshdir"] = "."
 
     dir_path = mjcf_path.parent / compiler.attrib["meshdir"]
+    
+    # 获取URDF文件的目录
+    if urdf_dir is None:
+        urdf_dir = mjcf_path.parent  # 默认假设与MJCF文件在同一目录
+    
+    # 自动检测工作空间搜索路径
+    from urdf2mjcf.package_resolver import find_workspace_from_path
+    workspace_search_paths = []
+    
+    # 从MJCF文件位置查找工作空间
+    workspace_from_mjcf = find_workspace_from_path(mjcf_path.parent)
+    if workspace_from_mjcf:
+        workspace_search_paths.append(workspace_from_mjcf)
+    
+    # 检查当前工作目录
+    workspace_from_cwd = find_workspace_from_path(Path.cwd())
+    if workspace_from_cwd and workspace_from_cwd not in workspace_search_paths:
+        workspace_search_paths.append(workspace_from_cwd)
+    
+    # 添加一些手动路径作为备选
+    cwd = Path.cwd()
+    for i in range(3):  # 检查最多3层
+        if cwd not in workspace_search_paths:
+            workspace_search_paths.append(cwd)
+        if cwd.parent == cwd:  # 已到达文件系统根目录
+            break
+        cwd = cwd.parent
 
     asset = root.find("asset")
     if asset is None:
@@ -133,7 +183,7 @@ def convex_decomposition_assets(mjcf_path: str | Path, root: ET.Element, max_pro
     # 准备多进程处理的数据
     mesh_info_list = []
     for mesh_name in unique_meshes:
-        mesh_info_list.append((mesh_name, mesh_assets[mesh_name], dir_path))
+        mesh_info_list.append((mesh_name, mesh_assets[mesh_name], dir_path, urdf_dir, workspace_search_paths))
     
     # 获取CPU核心数并设置进程数
     cpu_count = os.cpu_count() or 4  # 如果获取失败，默认使用4核
@@ -202,16 +252,17 @@ def convex_decomposition_assets(mjcf_path: str | Path, root: ET.Element, max_pro
                 new_geom.attrib["mesh"] = part_name
 
 
-def convex_decomposition(mjcf_path: str | Path, max_processes: Optional[int] = None) -> None:
+def convex_decomposition(mjcf_path: str | Path, max_processes: Optional[int] = None, urdf_dir: Optional[Path] = None) -> None:
     """对 MJCF 文件进行凸分解处理。
 
     Args:
         mjcf_path: MJCF 文件的路径
         max_processes: 最大进程数，如果为None则自动计算为CPU核心数-4
+        urdf_dir: URDF文件所在目录，如果为None则假设与MJCF文件在同一目录
     """
     tree = ET.parse(mjcf_path)
     root = tree.getroot()
-    convex_decomposition_assets(mjcf_path, root, max_processes)
+    convex_decomposition_assets(mjcf_path, root, max_processes, urdf_dir)
 
     save_xml(mjcf_path, tree)
 
