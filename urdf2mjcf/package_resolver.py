@@ -255,7 +255,7 @@ class PackageResolver:
         if path:
             return path
         
-        logger.warning(f"Could not resolve package path for: {package_name}")
+        logger.warning(f"Could not resolve package path for: {package_name} in {converted_search_paths}")
         return None
     
     def resolve_package_resource(self, package_url: str, search_paths: Optional[List[Union[str, Path]]] = None) -> Optional[Path]:
