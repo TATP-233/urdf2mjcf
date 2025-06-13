@@ -1,7 +1,0 @@
-mujoco>=3.3.2
-numpy
-pydantic
-scipy
-coacd
-trimesh
-fast-simplification
