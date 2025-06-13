@@ -23,19 +23,9 @@ A powerful URDF to MJCF conversion tool with advanced mesh processing and roboti
 
 ### Installation Steps
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/TATP-233/urdf2mjcf.git
 cd urdf2mjcf
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Install the package:
-```bash
 pip install -e .
 ```
 
@@ -44,17 +34,17 @@ pip install -e .
 ### Basic Conversion
 
 ```bash
-python convert.py input.urdf --output output.xml
+urdf2mjcf input.urdf --output output.xml
 ```
 
 ### Advanced Usage
 
 ```bash
 # Using metadata file
-python convert.py robot.urdf --output robot.xml --metadata-file metadata.json
+urdf2mjcf robot.urdf --output robot.xml --metadata-file metadata.json
 
 # Specifying output directory
-python convert.py /path/to/robot.urdf --output /path/to/output/robot.xml
+urdf2mjcf /path/to/robot.urdf --output /path/to/output/robot.xml
 ```
 
 ### Python API

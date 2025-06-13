@@ -25,19 +25,9 @@
 
 ### 安装步骤
 
-1. 克隆仓库：
 ```bash
 git clone https://github.com/TATP-233/urdf2mjcf.git
 cd urdf2mjcf
-```
-
-2. 安装依赖：
-```bash
-pip install -r requirements.txt
-```
-
-3. 安装包：
-```bash
 pip install -e .
 ```
 
@@ -46,17 +36,17 @@ pip install -e .
 ### 基本转换
 
 ```bash
-python convert.py input.urdf --output output.xml
+urdf2mjcf input.urdf --output output.xml
 ```
 
 ### 高级用法
 
 ```bash
 # 使用元数据文件
-python convert.py robot.urdf --output robot.xml --metadata-file metadata.json
+urdf2mjcf robot.urdf --output robot.xml --metadata-file metadata.json
 
 # 指定输出目录
-python convert.py /path/to/robot.urdf --output /path/to/output/robot.xml
+urdf2mjcf /path/to/robot.urdf --output /path/to/output/robot.xml
 ```
 
 ### Python API
