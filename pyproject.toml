@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "urdf2mjcf"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Convert URDF to MJCF with advanced mesh processing"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "urdf2mjcf contributors"}
+    {name = "Chenyu Cao", email = "ruziniuuuuu@gmail.com"}
 ]
 keywords = ["urdf", "mjcf", "mujoco", "robotics", "simulation"]
 classifiers = [
@@ -17,21 +17,21 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
+    "mujoco>=3.3.2",
     "numpy",
-    "trimesh",
-    "lxml",
     "pydantic",
+    "scipy",
     "coacd",
+    "trimesh",
+    "fast-simplification",
 ]
 
 [project.optional-dependencies]
@@ -43,9 +43,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-username/urdf2mjcf"
-Repository = "https://github.com/your-username/urdf2mjcf"
-Issues = "https://github.com/your-username/urdf2mjcf/issues"
+Homepage = "https://github.com/TATP-233/urdf2mjcf"
+Repository = "https://github.com/TATP-233/urdf2mjcf"
+Issues = "https://github.com/TATP-233/urdf2mjcf/issues"
 
 [project.scripts]
 urdf2mjcf = "urdf2mjcf.convert:main"
@@ -54,13 +54,16 @@ urdf2mjcf = "urdf2mjcf.convert:main"
 where = ["."]
 include = ["urdf2mjcf*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "urdf2mjcf.__version__"}
+
 [tool.black]
 line-length = 120
-target-version = ["py38"]
+target-version = ["py310"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py38"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
@@ -74,7 +77,7 @@ testpaths = ["tests"]
 addopts = "-v"
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
