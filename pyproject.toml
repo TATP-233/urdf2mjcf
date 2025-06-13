@@ -43,9 +43,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kscalelabs/urdf2mjcf"
-Repository = "https://github.com/kscalelabs/urdf2mjcf"
-Issues = "https://github.com/kscalelabs/urdf2mjcf/issues"
+Homepage = "https://github.com/TATP-233/urdf2mjcf"
+Repository = "https://github.com/TATP-233/urdf2mjcf"
+Issues = "https://github.com/TATP-233/urdf2mjcf/issues"
 
 [project.scripts]
 urdf2mjcf = "urdf2mjcf.convert:main"
