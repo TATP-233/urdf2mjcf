@@ -147,6 +147,7 @@ def process_obj_mtl_materials(obj_file: Path, target_dir: Path) -> dict[str, Mat
         for sub_mtl in sub_mtls:
             if sub_mtl:  # Make sure the material has content
                 material = Material.from_string(sub_mtl)
+                material.name = f"{obj_file.stem}_{material.name}" 
                 materials[material.name] = material
                 logger.info(f"Found material: {material.name}")
                 
