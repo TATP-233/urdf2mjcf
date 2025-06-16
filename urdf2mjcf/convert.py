@@ -533,7 +533,8 @@ def convert_urdf_to_mjcf(
                                             submesh_lines = f.readlines()
                                         for line in submesh_lines:
                                             if line.startswith('usemtl '):
-                                                mtl_name = line.split()[1].strip()
+                                                mtl_name_raw = line.split()[1].strip()
+                                                mtl_name = f"{original_obj_file.stem}_{mtl_name_raw}"
                                                 if mtl_name in mtl_materials:
                                                     assigned_material = mtl_name
                                                     logger.info(f"Using MTL material '{mtl_name}' for submesh '{submesh_name}'")
@@ -618,6 +619,9 @@ def convert_urdf_to_mjcf(
                                         shutil.copy2(single_mesh, dest_file)
                                         rel_path = dest_file.relative_to(target_mesh_dir)
                                         mesh_assets[geom.mesh] = str(rel_path)
+                                
+                                # For single mesh with material, we still need to create the geom with proper material assignment
+                                # Don't skip to standard geom creation for this case
                 
                 # Standard single geom creation (for non-split meshes or other types)
                 name = f"{link_name}_visual"
@@ -677,7 +681,10 @@ def convert_urdf_to_mjcf(
                                         obj_lines = f.readlines()
                                     for line in obj_lines:
                                         if line.startswith('usemtl '):
-                                            mtl_name = line.split()[1].strip()
+                                            mtl_name_raw = line.split()[1].strip()
+                                            # MTL materials are prefixed with obj file stem
+                                            obj_stem = Path(geom.mesh).stem
+                                            mtl_name = f"{obj_stem}_{mtl_name_raw}"
                                             if mtl_name in mtl_materials:
                                                 assigned_material = mtl_name
                                                 logger.info(f"Using MTL material '{mtl_name}' for mesh '{geom.mesh}'")
@@ -687,11 +694,15 @@ def convert_urdf_to_mjcf(
                                 except Exception as e:
                                     logger.warning(f"Could not read OBJ file {obj_path} to find material: {e}")
                         
-                        # If no specific material found, use the first available MTL material
+                        # If no specific material found, use the first available MTL material for this specific OBJ file
                         if assigned_material == "default_material" and mtl_materials:
-                            first_mtl = next(iter(mtl_materials.values()))
-                            assigned_material = first_mtl.name
-                            logger.info(f"Using first MTL material '{assigned_material}' for mesh '{geom.mesh}'")
+                            obj_stem = Path(geom.mesh).stem
+                            # Only look for materials that belong to this specific OBJ file
+                            obj_specific_materials = {k: v for k, v in mtl_materials.items() if k.startswith(f"{obj_stem}_")}
+                            if obj_specific_materials:
+                                first_mtl = next(iter(obj_specific_materials.values()))
+                                assigned_material = first_mtl.name
+                                logger.info(f"Using first MTL material '{assigned_material}' for mesh '{geom.mesh}'")
                     else:
                         assigned_material = "default_material"
                     
@@ -1006,6 +1017,7 @@ def main() -> None:
         help="The log level to use.",
     )
     args = parser.parse_args()
+    logger.setLevel(args.log_level)
 
     # Parse the raw metadata from the command line arguments.
     raw_metadata: dict | None = None
