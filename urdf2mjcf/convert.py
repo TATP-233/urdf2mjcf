@@ -299,7 +299,7 @@ def convert_urdf_to_mjcf(
                             obj_mtl_materials = process_obj_mtl_materials(mesh_file_path, target_mesh_dir)
                             mtl_materials.update(obj_mtl_materials)
                             if obj_mtl_materials:
-                                logger.info(f"Loaded {len(obj_mtl_materials)} MTL materials from {mesh_name}")
+                                logger.warning(f"Loaded {len(obj_mtl_materials)} MTL materials from {mesh_name}")
                         
                 scale = mesh_elem.attrib.get("scale")
                 return GeomElement(
@@ -408,10 +408,11 @@ def convert_urdf_to_mjcf(
                 iyz = float(inertia_elem.attrib.get("iyz", "0"))
                 izz = float(inertia_elem.attrib.get("izz", "0"))
                 if abs(ixy) > 1e-6 or abs(ixz) > 1e-6 or abs(iyz) > 1e-6:
-                    logger.warning(
-                        "Warning: off-diagonal inertia terms for link '%s' are nonzero and will be ignored.",
-                        link_name,
-                    )
+                    # logger.warning(
+                    #     "Warning: off-diagonal inertia terms for link '%s' are nonzero and will be ignored.",
+                    #     link_name,
+                    # )
+                    pass
                 inertial_elem.attrib["diaginertia"] = f"{ixx} {iyy} {izz}"
             body.append(inertial_elem)
 
@@ -534,10 +535,17 @@ def convert_urdf_to_mjcf(
                                         for line in submesh_lines:
                                             if line.startswith('usemtl '):
                                                 mtl_name_raw = line.split()[1].strip()
-                                                mtl_name = f"{original_obj_file.stem}_{mtl_name_raw}"
-                                                if mtl_name in mtl_materials:
-                                                    assigned_material = mtl_name
-                                                    logger.info(f"Using MTL material '{mtl_name}' for submesh '{submesh_name}'")
+                                                # Try submesh-specific material name first (e.g., left_arm_link3_0_material_0)
+                                                submesh_mtl_name = f"{submesh_stem}_{mtl_name_raw}"
+                                                if submesh_mtl_name in mtl_materials:
+                                                    assigned_material = submesh_mtl_name
+                                                    logger.info(f"Using MTL material '{submesh_mtl_name}' for submesh '{submesh_name}'")
+                                                    break
+                                                # Fallback to original obj file name (e.g., left_arm_link3_material_0)
+                                                orig_mtl_name = f"{original_obj_file.stem}_{mtl_name_raw}"
+                                                if orig_mtl_name in mtl_materials:
+                                                    assigned_material = orig_mtl_name
+                                                    logger.info(f"Using MTL material '{orig_mtl_name}' for submesh '{submesh_name}'")
                                                     break
                                     except Exception as e:
                                         logger.warning(f"Could not read submesh {submesh_path} to find material: {e}")
@@ -682,12 +690,19 @@ def convert_urdf_to_mjcf(
                                     for line in obj_lines:
                                         if line.startswith('usemtl '):
                                             mtl_name_raw = line.split()[1].strip()
-                                            # MTL materials are prefixed with obj file stem
-                                            obj_stem = Path(geom.mesh).stem
-                                            mtl_name = f"{obj_stem}_{mtl_name_raw}"
-                                            if mtl_name in mtl_materials:
-                                                assigned_material = mtl_name
-                                                logger.info(f"Using MTL material '{mtl_name}' for mesh '{geom.mesh}'")
+                                            # Try the exact obj file stem first (for single mesh files)
+                                            obj_stem = obj_path.stem
+                                            exact_mtl_name = f"{obj_stem}_{mtl_name_raw}"
+                                            if exact_mtl_name in mtl_materials:
+                                                assigned_material = exact_mtl_name
+                                                logger.info(f"Using MTL material '{exact_mtl_name}' for mesh '{geom.mesh}'")
+                                                break
+                                            # Fallback to original mesh name
+                                            fallback_stem = Path(geom.mesh).stem
+                                            fallback_mtl_name = f"{fallback_stem}_{mtl_name_raw}"
+                                            if fallback_mtl_name in mtl_materials:
+                                                assigned_material = fallback_mtl_name
+                                                logger.info(f"Using MTL material '{fallback_mtl_name}' for mesh '{geom.mesh}'")
                                                 break
                                     if assigned_material != "default_material":
                                         break
@@ -696,13 +711,24 @@ def convert_urdf_to_mjcf(
                         
                         # If no specific material found, use the first available MTL material for this specific OBJ file
                         if assigned_material == "default_material" and mtl_materials:
-                            obj_stem = Path(geom.mesh).stem
-                            # Only look for materials that belong to this specific OBJ file
-                            obj_specific_materials = {k: v for k, v in mtl_materials.items() if k.startswith(f"{obj_stem}_")}
-                            if obj_specific_materials:
-                                first_mtl = next(iter(obj_specific_materials.values()))
-                                assigned_material = first_mtl.name
-                                logger.info(f"Using first MTL material '{assigned_material}' for mesh '{geom.mesh}'")
+                            # Try different possible stem patterns
+                            possible_stems = []
+                            obj_name = Path(geom.mesh).stem
+                            possible_stems.append(obj_name)
+                            
+                            # Also try stems from the actual file paths we checked
+                            for obj_path in obj_paths_to_try:
+                                if obj_path and obj_path.exists():
+                                    possible_stems.append(obj_path.stem)
+                            
+                            # Look for materials that belong to any of these possible stems
+                            for stem in possible_stems:
+                                obj_specific_materials = {k: v for k, v in mtl_materials.items() if k.startswith(f"{stem}_")}
+                                if obj_specific_materials:
+                                    first_mtl = next(iter(obj_specific_materials.values()))
+                                    assigned_material = first_mtl.name
+                                    logger.info(f"Using first MTL material '{assigned_material}' for mesh '{geom.mesh}' (stem: {stem})")
+                                    break
                     else:
                         assigned_material = "default_material"
                     
@@ -881,7 +907,7 @@ def convert_urdf_to_mjcf(
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     add_floor(mjcf_path)
     add_light(mjcf_path)
-    convex_decomposition(mjcf_path, urdf_dir=urdf_path.parent)
+    # convex_decomposition(mjcf_path, urdf_dir=urdf_path.parent)
     
     # After convex decomposition, we need to copy any newly generated mesh files
     # Re-parse the MJCF file to get the updated mesh assets
