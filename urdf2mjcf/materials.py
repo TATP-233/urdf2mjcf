@@ -192,6 +192,7 @@ def process_obj_mtl_materials(obj_file: Path, target_dir: Path) -> dict[str, Mat
                 logger.info(f"Splitting OBJ into {len(mesh.geometry)} submeshes by material")
                 for i, (material_name, geom) in enumerate(mesh.geometry.items()):
                     submesh_name = obj_target_dir / f"{obj_file.stem}_{i}.obj"
+                    geom.visual.material.name = material_name
                     geom.export(submesh_name.as_posix(), include_texture=True, header=None)
                     logger.info(f"Saved submesh: {submesh_name.name} (material: {material_name})")
                     
@@ -202,5 +203,7 @@ def process_obj_mtl_materials(obj_file: Path, target_dir: Path) -> dict[str, Mat
                         
     except Exception as e:
         logger.error(f"Failed to process MTL file {mtl_file}: {e}")
-        
-    return materials 
+    
+    print(materials.keys())
+
+    return materials
