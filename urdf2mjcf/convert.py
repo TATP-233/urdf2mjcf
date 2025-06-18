@@ -13,6 +13,7 @@ from urdf2mjcf.postprocess.add_floor import add_floor
 from urdf2mjcf.postprocess.add_light import add_light
 from urdf2mjcf.postprocess.update_mesh import update_mesh
 from urdf2mjcf.postprocess.convex_decomposition import convex_decomposition
+from urdf2mjcf.postprocess.split_obj_materials import split_obj_by_materials
 from urdf2mjcf.postprocess.base_joint import fix_base_joint
 from urdf2mjcf.postprocess.collisions import update_collisions
 from urdf2mjcf.postprocess.explicit_floor_contacts import add_explicit_floor_contacts
@@ -21,7 +22,6 @@ from urdf2mjcf.postprocess.remove_redundancies import remove_redundancies
 from urdf2mjcf.postprocess.check_shell import check_shell_meshes
 from urdf2mjcf.utils import save_xml
 
-from urdf2mjcf.materials import Material, process_obj_mtl_materials
 from urdf2mjcf.geometry import (
     ParsedJointParams, 
     GeomElement, 
@@ -39,6 +39,7 @@ from urdf2mjcf.mjcf_builders import (
     ROBOT_CLASS
 )
 from urdf2mjcf.package_resolver import resolve_package_path, resolve_package_resource, find_workspace_from_path
+from urdf2mjcf.materials import Material, parse_mtl_name, get_obj_material_info, copy_obj_with_mtl
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,6 @@ def _get_empty_joint_and_actuator_metadata(
 
     actuator_meta = {"motor": ActuatorMetadata(actuator_type="motor")}
     return joint_meta, actuator_meta
-
 
 def convert_urdf_to_mjcf(
     urdf_path: str | Path,
@@ -157,7 +157,7 @@ def convert_urdf_to_mjcf(
     # Create a new MJCF tree root element.
     mjcf_root: ET.Element = ET.Element("mujoco", attrib={"model": robot.attrib.get("name", "converted_robot")})
 
-    # Add compiler, option, visual, but NOT assets yet (we need to process MTL materials first)
+    # Add compiler, option, visual, and assets
     add_compiler(mjcf_root)
     add_option(mjcf_root)
     add_visual(mjcf_root)
@@ -195,9 +195,6 @@ def convert_urdf_to_mjcf(
     mesh_assets: dict[str, str] = {}
     actuator_joints: list[ParsedJointParams] = []
     
-    # Dictionary to collect MTL materials from OBJ files
-    mtl_materials: dict[str, Material] = {}
-    
     # Prepare paths for mesh processing
     urdf_dir: Path = urdf_path.parent.resolve()
     target_mesh_dir: Path = (mjcf_path.parent).resolve()
@@ -206,27 +203,12 @@ def convert_urdf_to_mjcf(
     # Auto-detect workspace search paths for package resolution
     workspace_search_paths = []
     
-    # Strategy 1: Find workspace from URDF file location
+    # Find workspace from URDF file location
     workspace_from_urdf = find_workspace_from_path(urdf_dir)
     if workspace_from_urdf:
         workspace_search_paths.append(workspace_from_urdf)
         logger.debug(f"Found ROS workspace from URDF location: {workspace_from_urdf}")
     
-    # Strategy 2: Check current working directory
-    workspace_from_cwd = find_workspace_from_path(Path.cwd())
-    if workspace_from_cwd and workspace_from_cwd not in workspace_search_paths:
-        workspace_search_paths.append(workspace_from_cwd)
-        logger.debug(f"Found ROS workspace from CWD: {workspace_from_cwd}")
-    
-    # Strategy 3: Add some manual paths as fallback
-    cwd = Path.cwd()
-    for i in range(3):  # Check up to 3 levels up
-        if cwd not in workspace_search_paths:
-            workspace_search_paths.append(cwd)
-        if cwd.parent == cwd:  # At filesystem root
-            break
-        cwd = cwd.parent
-
     def handle_geom_element(geom_elem: ET.Element | None, default_size: str) -> GeomElement:
         """Helper to handle geometry elements safely.
 
@@ -272,34 +254,6 @@ def convert_urdf_to_mjcf(
                 mesh_name = Path(filename).name
                 if mesh_name not in mesh_assets:
                     mesh_assets[mesh_name] = filename
-                    
-                    # Process MTL materials for OBJ files
-                    if mesh_name.lower().endswith('.obj'):
-                        # Handle package:// paths correctly
-                        if filename.startswith('package://'):
-                            # Extract package name and relative path
-                            package_path = filename[len('package://'):]
-                            pkg_name = package_path.split('/')[0]
-                            sub_path = '/'.join(package_path.split('/')[1:])
-                            
-                            # Use package_resolver to find the package path
-                            try:
-                                pkg_root = resolve_package_path(pkg_name, workspace_search_paths)
-                                if pkg_root:
-                                    mesh_file_path = pkg_root / sub_path
-                                else:
-                                    mesh_file_path = None
-                            except (ImportError, Exception) as e:
-                                logger.warning(f"Could not resolve package path {filename}: {e}")
-                                mesh_file_path = None
-                        else:
-                            mesh_file_path = urdf_dir / filename if not filename.startswith('/') else Path(filename)
-                        
-                        if mesh_file_path:
-                            obj_mtl_materials = process_obj_mtl_materials(mesh_file_path, target_mesh_dir)
-                            mtl_materials.update(obj_mtl_materials)
-                            if obj_mtl_materials:
-                                logger.warning(f"Loaded {len(obj_mtl_materials)} MTL materials from {mesh_name}")
                         
                 scale = mesh_elem.attrib.get("scale")
                 return GeomElement(
@@ -408,11 +362,10 @@ def convert_urdf_to_mjcf(
                 iyz = float(inertia_elem.attrib.get("iyz", "0"))
                 izz = float(inertia_elem.attrib.get("izz", "0"))
                 if abs(ixy) > 1e-6 or abs(ixz) > 1e-6 or abs(iyz) > 1e-6:
-                    # logger.warning(
-                    #     "Warning: off-diagonal inertia terms for link '%s' are nonzero and will be ignored.",
-                    #     link_name,
-                    # )
-                    pass
+                    logger.info(
+                        "Warning: off-diagonal inertia terms for link '%s' are nonzero and will be ignored.",
+                        link_name,
+                    )
                 inertial_elem.attrib["diaginertia"] = f"{ixx} {iyy} {izz}"
             body.append(inertial_elem)
 
@@ -463,175 +416,7 @@ def convert_urdf_to_mjcf(
             if visual_geom_elem is not None:
                 geom = handle_geom_element(visual_geom_elem, "1 1 1")
                 
-                # Handle OBJ files with potential material splitting
-                if geom.type == "mesh" and geom.mesh is not None and geom.mesh.lower().endswith('.obj'):
-                    # Check if we have split meshes for this OBJ file
-                    obj_name = Path(geom.mesh).stem
-                    
-                    # For package:// paths, find the actual file location
-                    if mesh_assets.get(geom.mesh, "").startswith('package://'):
-                        obj_filename = mesh_assets[geom.mesh]
-                        package_path = obj_filename[len('package://'):]
-                        pkg_name = package_path.split('/')[0]
-                        sub_path = '/'.join(package_path.split('/')[1:])
-                        try:
-                            pkg_root = resolve_package_path(pkg_name, workspace_search_paths)
-                            if pkg_root:
-                                original_obj_file = pkg_root / sub_path
-                            else:
-                                original_obj_file = None
-                        except:
-                            original_obj_file = None
-                    else:
-                        # For non-package paths, resolve relative to URDF directory
-                        obj_filename = mesh_assets.get(geom.mesh, geom.mesh)
-                        if obj_filename.startswith('/'):
-                            # Absolute path
-                            original_obj_file = Path(obj_filename)
-                        else:
-                            # Relative path - relative to URDF file directory
-                            original_obj_file = urdf_dir / obj_filename
-                    
-                    if original_obj_file and original_obj_file.exists():
-                        obj_target_dir = original_obj_file.parent / obj_name
-                        
-                        if obj_target_dir.exists():
-                            # Check for split submeshes
-                            submeshes = list(obj_target_dir.glob(f"{obj_name}_*.obj"))
-                            
-                            if submeshes:
-                                # Multiple submeshes found - create a geom for each
-                                logger.info(f"Found {len(submeshes)} submeshes for {geom.mesh}")
-                                
-                                for i, submesh_path in enumerate(sorted(submeshes)):
-                                    submesh_name = submesh_path.name
-                                    submesh_stem = submesh_path.stem  # without .obj extension
-                                    
-                                    # Create geom name
-                                    geom_name = f"{link_name}_visual"
-                                    if len(visuals) > 1:
-                                        geom_name = f"{geom_name}_{idx}"
-                                    geom_name = f"{geom_name}_{i}"
-                                    
-                                    visual_geom_attrib = {
-                                        "name": geom_name,
-                                        "pos": pos_geom,
-                                        "quat": quat_geom,
-                                        "type": "mesh",
-                                        "mesh": submesh_stem,  # Use stem (without .obj) to match asset name
-                                        "class": "visual"
-                                    }
-                                    
-                                    if geom.scale is not None:
-                                        visual_geom_attrib["scale"] = geom.scale
-                                    
-                                    # Try to find the corresponding MTL material for this submesh
-                                    assigned_material = "default_material"
-                                    
-                                    # Read the submesh OBJ file to find which material it uses
-                                    try:
-                                        with open(submesh_path, 'r') as f:
-                                            submesh_lines = f.readlines()
-                                        for line in submesh_lines:
-                                            if line.startswith('usemtl '):
-                                                mtl_name_raw = line.split()[1].strip()
-                                                # Try submesh-specific material name first (e.g., left_arm_link3_0_material_0)
-                                                submesh_mtl_name = f"{submesh_stem}_{mtl_name_raw}"
-                                                if submesh_mtl_name in mtl_materials:
-                                                    assigned_material = submesh_mtl_name
-                                                    logger.info(f"Using MTL material '{submesh_mtl_name}' for submesh '{submesh_name}'")
-                                                    break
-                                                # Fallback to original obj file name (e.g., left_arm_link3_material_0)
-                                                orig_mtl_name = f"{original_obj_file.stem}_{mtl_name_raw}"
-                                                if orig_mtl_name in mtl_materials:
-                                                    assigned_material = orig_mtl_name
-                                                    logger.info(f"Using MTL material '{orig_mtl_name}' for submesh '{submesh_name}'")
-                                                    break
-                                    except Exception as e:
-                                        logger.warning(f"Could not read submesh {submesh_path} to find material: {e}")
-
-                                    # If no MTL material found, check URDF material
-                                    if assigned_material == "default_material":
-                                        material_elem = visual.find("material")
-                                        if material_elem is not None:
-                                            material_name = material_elem.attrib.get("name")
-                                            if material_name and material_name in materials:
-                                                assigned_material = material_name
-                                    
-                                    visual_geom_attrib["material"] = assigned_material
-                                    ET.SubElement(body, "geom", attrib=visual_geom_attrib)
-                                    
-                                    # Add the submesh to mesh_assets if not already added
-                                    # Use stem as key to match the geom reference
-                                    if submesh_stem not in mesh_assets:
-                                        # Generate the path following the original mesh structure
-                                        # Example: meshes/chassis/omni_chassis_base_link.obj -> meshes/chassis/omni_chassis_base_link/omni_chassis_base_link_0.obj
-                                        if mesh_assets.get(geom.mesh):
-                                            original_path_str = mesh_assets[geom.mesh]
-                                            # Clean package:// path if present
-                                            if original_path_str.startswith('package://'):
-                                                package_path = original_path_str[len('package://'):]
-                                                parts = package_path.split('/')
-                                                if len(parts) > 1:
-                                                    # Remove the package name part, keep the rest as relative path
-                                                    original_path_str = '/'.join(parts[1:])
-                                            
-                                            original_path = Path(original_path_str)
-                                            # Create the submesh path by inserting the obj_name directory
-                                            submesh_rel_path = original_path.parent / obj_name / submesh_name
-                                            
-                                            # Copy to target_mesh_dir maintaining the directory structure
-                                            dest_file = target_mesh_dir / submesh_rel_path
-                                            dest_file.parent.mkdir(parents=True, exist_ok=True)
-                                            shutil.copy2(submesh_path, dest_file)
-                                            mesh_assets[submesh_stem] = str(submesh_rel_path)
-                                        else:
-                                            # Fallback: create submesh directory structure in target_mesh_dir
-                                            dest_dir = target_mesh_dir / obj_name
-                                            dest_dir.mkdir(parents=True, exist_ok=True)
-                                            dest_file = dest_dir / submesh_name
-                                            shutil.copy2(submesh_path, dest_file)
-                                            rel_path = dest_file.relative_to(target_mesh_dir)
-                                            mesh_assets[submesh_stem] = str(rel_path)
-                                
-                                continue  # Skip the single geom creation below
-                            else:
-                                # No submeshes, check for single copied mesh
-                                single_mesh = obj_target_dir / f"{obj_name}.obj"
-                                if single_mesh.exists():
-                                    # Copy to target dir maintaining the original directory structure
-                                    if mesh_assets.get(geom.mesh):
-                                        original_path_str = mesh_assets[geom.mesh]
-                                        # Clean package:// path if present
-                                        if original_path_str.startswith('package://'):
-                                            package_path = original_path_str[len('package://'):]
-                                            parts = package_path.split('/')
-                                            if len(parts) > 1:
-                                                # Remove the package name part, keep the rest as relative path
-                                                original_path_str = '/'.join(parts[1:])
-                                        
-                                        original_path = Path(original_path_str)
-                                        # Create the path following original structure: meshes/chassis/omni_chassis_base_link.obj -> meshes/chassis/omni_chassis_base_link/omni_chassis_base_link.obj
-                                        single_mesh_rel_path = original_path.parent / obj_name / f"{obj_name}.obj"
-                                        
-                                        # Copy to target_mesh_dir maintaining the directory structure
-                                        dest_file = target_mesh_dir / single_mesh_rel_path
-                                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-                                        shutil.copy2(single_mesh, dest_file)
-                                        mesh_assets[geom.mesh] = str(single_mesh_rel_path)
-                                    else:
-                                        # Fallback: copy to simple subdirectory
-                                        dest_dir = target_mesh_dir / obj_name  
-                                        dest_dir.mkdir(parents=True, exist_ok=True)
-                                        dest_file = dest_dir / single_mesh.name
-                                        shutil.copy2(single_mesh, dest_file)
-                                        rel_path = dest_file.relative_to(target_mesh_dir)
-                                        mesh_assets[geom.mesh] = str(rel_path)
-                                
-                                # For single mesh with material, we still need to create the geom with proper material assignment
-                                # Don't skip to standard geom creation for this case
-                
-                # Standard single geom creation (for non-split meshes or other types)
+                # Standard single geom creation
                 name = f"{link_name}_visual"
                 if len(visuals) > 1:
                     name = f"{name}_{idx}"
@@ -640,103 +425,8 @@ def convert_urdf_to_mjcf(
                 visual_geom_attrib["type"] = geom.type
                 if geom.type == "mesh" and geom.mesh is not None:
                     visual_geom_attrib["mesh"] = geom.mesh
-                    
-                    # Check if this is an OBJ file with MTL materials (single mesh case)
-                    if geom.mesh.lower().endswith('.obj') and mtl_materials:
-                        assigned_material = "default_material"
-                        
-                        # Try to find the first available MTL material for this mesh
-                        obj_filename = mesh_assets.get(geom.mesh, "")
-                        
-                        # For single mesh, try to read the original or copied file
-                        obj_paths_to_try = []
-                        if obj_filename:
-                            if obj_filename.startswith('package://'):
-                                # Resolve package path
-                                package_path = obj_filename[len('package://'):]
-                                pkg_name = package_path.split('/')[0]
-                                sub_path = '/'.join(package_path.split('/')[1:])
-                                try:
-                                    pkg_root = resolve_package_path(pkg_name, workspace_search_paths)
-                                    if pkg_root:
-                                        obj_paths_to_try.append(pkg_root / sub_path)
-                                except:
-                                    pass
-                            else:
-                                # For non-package paths, resolve relative to URDF directory
-                                if obj_filename.startswith('/'):
-                                    # Absolute path
-                                    obj_paths_to_try.append(Path(obj_filename))
-                                else:
-                                    # Relative path - relative to URDF file directory
-                                    obj_paths_to_try.append(urdf_dir / obj_filename)
-                        
-                        # Also try the copied/processed version
-                        obj_name = Path(geom.mesh).stem
-                        obj_target_dir = target_mesh_dir / obj_name
-                        obj_paths_to_try.append(obj_target_dir / f"{obj_name}.obj")
-                        
-                        # Also try the path following the original mesh structure
-                        if mesh_assets.get(geom.mesh):
-                            original_path = Path(mesh_assets[geom.mesh])
-                            structured_path = target_mesh_dir / original_path.parent / obj_name / f"{obj_name}.obj"
-                            obj_paths_to_try.append(structured_path)
-                        
-                        for obj_path in obj_paths_to_try:
-                            if obj_path and obj_path.exists():
-                                try:
-                                    with open(obj_path, 'r') as f:
-                                        obj_lines = f.readlines()
-                                    for line in obj_lines:
-                                        if line.startswith('usemtl '):
-                                            mtl_name_raw = line.split()[1].strip()
-                                            # Try the exact obj file stem first (for single mesh files)
-                                            obj_stem = obj_path.stem
-                                            exact_mtl_name = f"{obj_stem}_{mtl_name_raw}"
-                                            if exact_mtl_name in mtl_materials:
-                                                assigned_material = exact_mtl_name
-                                                logger.info(f"Using MTL material '{exact_mtl_name}' for mesh '{geom.mesh}'")
-                                                break
-                                            # Fallback to original mesh name
-                                            fallback_stem = Path(geom.mesh).stem
-                                            fallback_mtl_name = f"{fallback_stem}_{mtl_name_raw}"
-                                            if fallback_mtl_name in mtl_materials:
-                                                assigned_material = fallback_mtl_name
-                                                logger.info(f"Using MTL material '{fallback_mtl_name}' for mesh '{geom.mesh}'")
-                                                break
-                                    if assigned_material != "default_material":
-                                        break
-                                except Exception as e:
-                                    logger.warning(f"Could not read OBJ file {obj_path} to find material: {e}")
-                        
-                        # If no specific material found, use the first available MTL material for this specific OBJ file
-                        if assigned_material == "default_material" and mtl_materials:
-                            # Try different possible stem patterns
-                            possible_stems = []
-                            obj_name = Path(geom.mesh).stem
-                            possible_stems.append(obj_name)
-                            
-                            # Also try stems from the actual file paths we checked
-                            for obj_path in obj_paths_to_try:
-                                if obj_path and obj_path.exists():
-                                    possible_stems.append(obj_path.stem)
-                            
-                            # Look for materials that belong to any of these possible stems
-                            for stem in possible_stems:
-                                obj_specific_materials = {k: v for k, v in mtl_materials.items() if k.startswith(f"{stem}_")}
-                                if obj_specific_materials:
-                                    first_mtl = next(iter(obj_specific_materials.values()))
-                                    assigned_material = first_mtl.name
-                                    logger.info(f"Using first MTL material '{assigned_material}' for mesh '{geom.mesh}' (stem: {stem})")
-                                    break
-                    else:
-                        assigned_material = "default_material"
-                    
                 elif geom.size is not None:
                     visual_geom_attrib["size"] = geom.size
-                    assigned_material = "default_material"
-                else:
-                    assigned_material = "default_material"
                     
                 if geom.scale is not None:
                     visual_geom_attrib["scale"] = geom.scale
@@ -752,15 +442,53 @@ def convert_urdf_to_mjcf(
                     "type": "box",
                     "size": "1 1 1"
                 }
-                assigned_material = "default_material"
             
-            # If no MTL material was assigned, check URDF material
-            if assigned_material == "default_material":
-                material_elem = visual.find("material")
-                if material_elem is not None:
-                    material_name = material_elem.attrib.get("name")
-                    if material_name and material_name in materials:
-                        assigned_material = material_name
+            # Check URDF material first
+            assigned_material = "default_material"
+            material_elem = visual.find("material")
+            if material_elem is not None:
+                material_name = material_elem.attrib.get("name")
+                if material_name and material_name in materials:
+                    assigned_material = material_name
+            
+            # For mesh geoms, check if it's a single-material OBJ file
+            if geom.type == "mesh" and geom.mesh is not None and assigned_material == "default_material":
+                # Try to find the actual OBJ file to check its materials
+                obj_filename = None
+                for mesh_name, filename in mesh_assets.items():
+                    if mesh_name == geom.mesh:
+                        obj_filename = filename
+                        break
+                
+                if obj_filename and obj_filename.lower().endswith('.obj'):
+                    # Determine the actual OBJ file path
+                    obj_file_path = None
+                    if 'package://' in obj_filename:
+                        # Handle package:// paths
+                        package_path = obj_filename[len('package://'):]
+                        pkg_mesh_name = package_path.split('/')[0]
+                        sub_path = '/'.join(package_path.split('/')[1:])
+                        try:
+                            pkg_root = resolve_package_path(pkg_mesh_name, workspace_search_paths)
+                            if pkg_root:
+                                obj_file_path = pkg_root / sub_path
+                        except:
+                            obj_file_path = None
+                    else:
+                        # Regular path
+                        if obj_filename.startswith('/'):
+                            obj_file_path = Path(obj_filename)
+                        else:
+                            obj_file_path = urdf_dir / obj_filename
+                    
+                    if obj_file_path:
+                        has_single_material, material_name = get_obj_material_info(obj_file_path)
+                        if has_single_material and material_name:
+                            # Create a material name that matches what split_obj_materials would create
+                            obj_stem = obj_file_path.stem
+                            single_material_name = f"{obj_stem}_{material_name}"
+                            assigned_material = single_material_name
+                            logger.info(f"Assigned single OBJ material {single_material_name} to geom {visual_geom_attrib['name']}")
                         
             visual_geom_attrib["material"] = assigned_material
             visual_geom_attrib["class"] = "visual"
@@ -801,8 +529,64 @@ def convert_urdf_to_mjcf(
         attrib={"name": root_site_name, "pos": "0 0 0", "quat": "1 0 0 0"},
     )
 
-    # Now that we've processed all meshes and collected MTL materials, add assets
-    add_assets(mjcf_root, materials, mtl_materials, metadata.visualize_collision_meshes)
+    # Collect materials from single-material OBJ files
+    obj_materials = {}
+    for mesh_name, filename in mesh_assets.items():
+        if filename.lower().endswith('.obj'):
+            # Determine the actual OBJ file path
+            obj_file_path = None
+            if 'package://' in filename:
+                package_path = filename[len('package://'):]
+                pkg_mesh_name = package_path.split('/')[0]
+                sub_path = '/'.join(package_path.split('/')[1:])
+                try:
+                    pkg_root = resolve_package_path(pkg_mesh_name, workspace_search_paths)
+                    if pkg_root:
+                        obj_file_path = pkg_root / sub_path
+                except:
+                    obj_file_path = None
+            else:
+                if filename.startswith('/'):
+                    obj_file_path = Path(filename)
+                else:
+                    obj_file_path = urdf_dir / filename
+            
+            if obj_file_path:
+                has_single_material, material_name = get_obj_material_info(obj_file_path)
+                if has_single_material and material_name:
+                    # Parse the MTL file to get material properties
+                    try:
+                        mtl_name = parse_mtl_name(obj_file_path.open("r").readlines())
+                        if mtl_name:
+                            mtl_file = obj_file_path.parent / mtl_name
+                            if mtl_file.exists():
+                                with open(mtl_file, "r") as f:
+                                    mtl_lines = f.readlines()
+                                
+                                # Find the material definition
+                                material_lines = []
+                                in_material = False
+                                for line in mtl_lines:
+                                    line = line.strip()
+                                    if line.startswith("newmtl ") and line.split()[1] == material_name:
+                                        in_material = True
+                                        material_lines = [line]
+                                    elif line.startswith("newmtl ") and in_material:
+                                        break
+                                    elif in_material:
+                                        material_lines.append(line)
+                                
+                                if material_lines:
+                                    material = Material.from_string(material_lines)
+                                    obj_stem = obj_file_path.stem
+                                    material.name = f"{obj_stem}_{material_name}"
+                                    obj_materials[material.name] = material
+                                    logger.info(f"Added single OBJ material: {material.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse single-material OBJ {obj_file_path}: {e}")
+
+    # Add assets
+    add_assets(mjcf_root, materials, obj_materials, metadata.visualize_collision_meshes)
 
     # Replace the actuator block with one that uses positional control.
     actuator_elem = ET.SubElement(mjcf_root, "actuator")
@@ -841,9 +625,7 @@ def convert_urdf_to_mjcf(
     # Add weld constraints if specified in metadata
     add_weld_constraints(mjcf_root, metadata)
 
-    # Copy mesh files - but skip the ones that have already been processed and copied
-
-    # Track which files we've already processed/copied to avoid duplicates
+    # Copy mesh files with special handling for OBJ files
     processed_files = set()
     
     for mesh_name, filename in mesh_assets.items():
@@ -895,7 +677,11 @@ def convert_urdf_to_mjcf(
             if str(target_path) not in processed_files:
                 if source_path != target_path:
                     try:
-                        shutil.copy2(source_path, target_path)
+                        # Special handling for OBJ files - copy with MTL
+                        if source_path.suffix.lower() == '.obj':
+                            copy_obj_with_mtl(source_path, target_path)
+                        else:
+                            shutil.copy2(source_path, target_path)
                         processed_files.add(str(target_path))
                         logger.debug(f"Copied mesh file: {source_path} -> {target_path}")
                     except Exception as e:
@@ -907,9 +693,10 @@ def convert_urdf_to_mjcf(
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     add_floor(mjcf_path)
     add_light(mjcf_path)
-    # convex_decomposition(mjcf_path, urdf_dir=urdf_path.parent)
+    convex_decomposition(mjcf_path)
+    split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
     
-    # After convex decomposition, we need to copy any newly generated mesh files
+    # After post-processing, we need to copy any newly generated mesh files
     # Re-parse the MJCF file to get the updated mesh assets
     logger.info("Copying any newly generated mesh files after post-processing...")
     updated_tree = ET.parse(mjcf_path)
@@ -978,7 +765,10 @@ def convert_urdf_to_mjcf(
             if source_path and source_path.exists():
                 try:
                     target_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source_path, target_path)
+                    if source_path.suffix.lower() == '.obj':
+                        copy_obj_with_mtl(source_path, target_path)
+                    else:
+                        shutil.copy2(source_path, target_path)
                     copied_files.add(str(target_path))
                     logger.debug(f"Copied mesh file: {source_path} -> {target_path}")
                 except Exception as e:
@@ -988,8 +778,8 @@ def convert_urdf_to_mjcf(
         
         logger.info(f"Copied {len(copied_files)} mesh files after post-processing")
     
-    # update_mesh(mjcf_path)
     check_shell_meshes(mjcf_path)
+    # update_mesh(mjcf_path)
 
     # Apply post-processing steps
     if metadata.angle != "radian":
