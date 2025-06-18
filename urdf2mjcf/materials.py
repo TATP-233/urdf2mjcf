@@ -1,8 +1,8 @@
 """Materials and MTL processing utilities."""
 
+import shutil
 import logging
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -88,122 +88,82 @@ def parse_mtl_name(lines: Sequence[str]) -> Optional[str]:
     return None
 
 
-def process_obj_mtl_materials(obj_file: Path, target_dir: Path) -> dict[str, Material]:
-    """Process MTL materials from OBJ file and copy required files.
-    
-    This function also splits the OBJ file by material groups, similar to obj2mjcf,
-    creating separate mesh files for each material.
+def get_obj_material_info(obj_file: Path) -> tuple[bool, str | None]:
+    """Get material information from an OBJ file.
     
     Args:
         obj_file: Path to the OBJ file
-        target_dir: Target directory for copied assets
         
     Returns:
-        Dictionary mapping material names to Material objects
+        Tuple of (has_single_material, material_name)
+        - has_single_material: True if the OBJ has exactly one material
+        - material_name: The material name if single material, None otherwise
     """
-    materials = {}
-    
-    if not obj_file.exists():
-        return materials
+    if not obj_file.exists() or not obj_file.suffix.lower() == '.obj':
+        return False, None
         
-    # Check if the OBJ file references an MTL file
     try:
         with obj_file.open("r") as f:
-            mtl_name = parse_mtl_name(f.readlines())
-    except Exception as e:
-        logger.warning(f"Failed to read OBJ file {obj_file}: {e}")
-        return materials
-        
-    if mtl_name is None:
-        return materials
-        
-    # Make sure the MTL file exists
-    mtl_file = obj_file.parent / mtl_name
-    if not mtl_file.exists():
-        logger.warning(f"MTL file {mtl_file} referenced in {obj_file} does not exist")
-        return materials
-        
-    logger.info(f"Found MTL file: {mtl_file}")
-    
-    try:
-        # Parse the MTL file into separate materials
-        with open(mtl_file, "r") as f:
             lines = f.readlines()
             
-        # Remove comments and empty lines
-        lines = [line for line in lines if not line.startswith("#")]
-        lines = [line for line in lines if line.strip()]
-        lines = [line.strip() for line in lines]
-        
-        # Split at each new material definition
-        sub_mtls = []
-        for line in lines:
-            if line.startswith("newmtl"):
-                sub_mtls.append([])
-            if sub_mtls:  # Only append if we have started a material
-                sub_mtls[-1].append(line)
+        # Check for MTL file reference
+        mtl_name = parse_mtl_name(lines)
+        if mtl_name is None:
+            return False, None
+            
+        # Check if MTL file exists
+        mtl_file = obj_file.parent / mtl_name
+        if not mtl_file.exists():
+            return False, None
+            
+        # Parse MTL file to count materials
+        with open(mtl_file, "r") as f:
+            mtl_lines = f.readlines()
+            
+        # Count material definitions
+        material_names = []
+        for line in mtl_lines:
+            line = line.strip()
+            if line.startswith("newmtl "):
+                material_name = line.split()[1]
+                material_names.append(material_name)
                 
-        # Process each material
-        for sub_mtl in sub_mtls:
-            if sub_mtl:  # Make sure the material has content
-                material = Material.from_string(sub_mtl)
-                material.name = f"{obj_file.stem}_{material.name}" 
-                materials[material.name] = material
-                logger.info(f"Found material: {material.name}")
-                
-                # Handle texture files
-                if material.map_Kd is not None:
-                    texture_path = Path(material.map_Kd)
-                    src_texture = obj_file.parent / texture_path
-                    if src_texture.exists():
-                        dst_texture = target_dir / texture_path.name
-                        dst_texture.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_texture, dst_texture)
-                        # Update the material to use the copied texture
-                        material.map_Kd = texture_path.name
-                        logger.info(f"Copied texture: {texture_path.name}")
-                    else:
-                        logger.warning(f"Texture file {src_texture} does not exist")
-        
-        # Now process the OBJ file to split by materials (like obj2mjcf does)
-        try:
-            import trimesh
+        # Return info about single material
+        if len(material_names) == 1:
+            return True, material_names[0]
+        else:
+            return False, None
             
-            # Load the OBJ file with material grouping
-            mesh = trimesh.load(
-                obj_file,
-                split_object=True,
-                group_material=True,  # Key parameter: group by material
-                process=False,
-                maintain_order=False,
-            )
-            
-            # Create target directory in the same directory as the original OBJ file
-            obj_target_dir = obj_file.parent / obj_file.stem
-            obj_target_dir.mkdir(parents=True, exist_ok=True)
-            
-            if isinstance(mesh, trimesh.base.Trimesh):
-                # Single mesh, just copy it
-                target_mesh = obj_target_dir / f"{obj_file.stem}.obj"
-                shutil.copy2(obj_file, target_mesh)
-                logger.info(f"Copied single mesh: {target_mesh.name}")
-            else:
-                # Multiple submeshes, save each one separately
-                logger.info(f"Splitting OBJ into {len(mesh.geometry)} submeshes by material")
-                for i, (material_name, geom) in enumerate(mesh.geometry.items()):
-                    submesh_name = obj_target_dir / f"{obj_file.stem}_{i}.obj"
-                    geom.visual.material.name = material_name
-                    geom.export(submesh_name.as_posix(), include_texture=True, header=None)
-                    logger.info(f"Saved submesh: {submesh_name.name} (material: {material_name})")
-                    
-        except ImportError:
-            logger.warning("trimesh not available, cannot split OBJ by materials")
-        except Exception as e:
-            logger.warning(f"Failed to split OBJ file {obj_file} by materials: {e}")
-                        
     except Exception as e:
-        logger.error(f"Failed to process MTL file {mtl_file}: {e}")
-    
-    print(materials.keys())
+        logger.warning(f"Failed to analyze OBJ material info for {obj_file}: {e}")
+        return False, None
 
-    return materials
+def copy_obj_with_mtl(obj_source: Path, obj_target: Path) -> None:
+    """Copy OBJ file and its associated MTL file if it exists.
+    
+    Args:
+        obj_source: Source OBJ file path
+        obj_target: Target OBJ file path
+    """
+    # Copy the OBJ file
+    obj_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(obj_source, obj_target)
+    
+    # Check for MTL file and copy it if it exists
+    try:
+        with open(obj_source, 'r') as f:
+            lines = f.readlines()
+        
+        # Look for mtllib directive
+        for line in lines:
+            if line.strip().startswith('mtllib '):
+                mtl_filename = line.strip().split()[1]
+                mtl_source = obj_source.parent / mtl_filename
+                mtl_target = obj_target.parent / mtl_filename
+                
+                if mtl_source.exists():
+                    shutil.copy2(mtl_source, mtl_target)
+                    logger.info(f"Copied MTL file: {mtl_source} -> {mtl_target}")
+                break
+    except Exception as e:
+        logger.warning(f"Failed to check/copy MTL file for {obj_source}: {e}")
