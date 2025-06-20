@@ -21,13 +21,10 @@ class CollisionParams(BaseModel):
 
 class JointMetadata(BaseModel):
     actuator_type: str | None = None
-    id: int
-    nn_id: int
     kp: float
-    kd: float
-    soft_torque_limit: float
-    min_angle_deg: float | None = None
-    max_angle_deg: float | None = None
+    kv: float
+    ctrlrange: list[float] | None = None
+    forcerange: list[float] | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "JointMetadata":
@@ -44,6 +41,7 @@ class ActuatorMetadata(BaseModel):
     max_torque: float | None = None
     max_velocity: float | None = None
     armature: float | None = None
+    stiffness: float | None = None
     damping: float | None = None
     frictionloss: float | None = None
     vin: float | None = None

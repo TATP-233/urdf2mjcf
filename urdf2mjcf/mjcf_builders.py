@@ -215,6 +215,20 @@ def add_weld_constraints(root: ET.Element, metadata: ConversionMetadata) -> None
             },
         )
 
+def add_size(root: ET.Element) -> None:
+    """Add a size element to the MJCF root.
+
+    Args:
+        root: The MJCF root element.
+    """
+    ET.SubElement(
+        root, 
+        "size", 
+        attrib={
+            "nconmax": "5000",
+            "njmax": "5000"
+        }
+    )
 
 def add_option(root: ET.Element) -> None:
     """Add an option element to the MJCF root.
@@ -222,15 +236,23 @@ def add_option(root: ET.Element) -> None:
     Args:
         root: The MJCF root element.
     """
-    # ET.SubElement(
-    #     root,
-    #     "option",
-    #     attrib={
-    #         "integrator": "implicitfast",
-    #         "cone": "elliptic",
-    #         "impratio": "100",
-    #     },
-    # )
+    ET.SubElement(
+        root,
+        "option",
+        attrib={
+            "timestep": "0.001",
+            "gravity": "0 0 -9.81",
+            "density": "0",
+            "impratio": "20",
+            "viscosity": "0.00002",
+            "integrator": "implicitfast",
+            "cone": "elliptic",
+            "jacobian": "auto",
+            "solver": "Newton",
+            "iterations": "100",
+            "tolerance": "1e-8",
+        },
+    )
 
 
 def add_visual(root: ET.Element) -> None:
@@ -247,7 +269,6 @@ def add_visual(root: ET.Element) -> None:
     #         "ellipsoidinertia": "true",
     #     },
     # )
-
 
 def add_assets(root: ET.Element, materials: dict[str, str], mtl_materials: dict[str, Material] = None, visualize_collision_meshes: bool = True) -> None:
     """Add texture and material assets to the MJCF root.
