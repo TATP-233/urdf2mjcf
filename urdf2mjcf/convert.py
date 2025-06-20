@@ -4,6 +4,7 @@ import json
 import shutil
 import logging
 import argparse
+import traceback
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -33,6 +34,7 @@ from urdf2mjcf.mjcf_builders import (
     add_default,
     add_contact,
     add_weld_constraints,
+    add_size,
     add_option,
     add_visual,
     add_assets,
@@ -58,13 +60,10 @@ def _get_empty_joint_and_actuator_metadata(
             continue
         joint_meta[name] = JointMetadata(
             actuator_type="motor",
-            id=idx,
-            nn_id=idx,
             kp=1.0,
-            kd=1.0,
-            soft_torque_limit=1.0,
-            min_angle_deg=0.0,
-            max_angle_deg=0.0,
+            kv=1.0,
+            ctrlrange=[0.0, 0.0],
+            forcerange=[0.0, 0.0],
         )
 
     actuator_meta = {"motor": ActuatorMetadata(actuator_type="motor")}
@@ -73,7 +72,6 @@ def _get_empty_joint_and_actuator_metadata(
 def convert_urdf_to_mjcf(
     urdf_path: str | Path,
     mjcf_path: str | Path | None = None,
-    metadata: ConversionMetadata | None = None,
     metadata_file: str | Path | None = None,
     *,
     joint_metadata: dict[str, JointMetadata] | None = None,
@@ -84,7 +82,6 @@ def convert_urdf_to_mjcf(
     Args:
         urdf_path: The path to the URDF file.
         mjcf_path: The desired output MJCF file path.
-        metadata: Optional conversion metadata.
         metadata_file: Optional path to metadata file.
         joint_metadata: Optional joint metadata.
         actuator_metadata: Optional actuator metadata.
@@ -100,12 +97,14 @@ def convert_urdf_to_mjcf(
     if robot is None:
         raise ValueError("URDF file has no root element")
 
-    if metadata_file is not None and metadata is not None:
-        raise ValueError("Cannot specify both metadata and metadata_file")
-    elif metadata_file is not None:
-        with open(metadata_file, "r") as f:
-            metadata = ConversionMetadata.model_validate_json(f.read())
-    if metadata is None:
+    if metadata_file is not None:
+        try:
+            with open(metadata_file, "r") as f:
+                metadata = ConversionMetadata.model_validate_json(f.read())
+        except Exception as e:
+            logger.warning("Failed to load metadata from %s: %s", metadata_file, e)
+            metadata = ConversionMetadata()
+    else:
         metadata = ConversionMetadata()
 
     if joint_metadata is None or actuator_metadata is None:
@@ -159,6 +158,7 @@ def convert_urdf_to_mjcf(
 
     # Add compiler, option, visual, and assets
     add_compiler(mjcf_root)
+    add_size(mjcf_root)
     add_option(mjcf_root)
     add_visual(mjcf_root)
     add_default(mjcf_root, metadata, joint_metadata, actuator_metadata)
@@ -693,7 +693,7 @@ def convert_urdf_to_mjcf(
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     add_floor(mjcf_path)
     add_light(mjcf_path)
-    convex_decomposition(mjcf_path)
+    # convex_decomposition(mjcf_path)
     split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
     
     # After post-processing, we need to copy any newly generated mesh files
@@ -819,12 +819,20 @@ def main() -> None:
     parser.add_argument(
         "--metadata",
         type=str,
-        help="A JSON string containing conversion metadata (joint params and sensors).",
+        default=None,
+        help="A JSON file containing conversion metadata (joint params and sensors).",
     )
     parser.add_argument(
-        "--metadata-file",
+        "--joint-metadata",
         type=str,
-        help="A JSON file containing conversion metadata (joint params and sensors).",
+        default=None,
+        help="A JSON file containing joint metadata.",
+    )
+    parser.add_argument(
+        "--actuator-metadata",
+        type=str,
+        default=None,
+        help="A JSON file containing actuator metadata.",
     )
     parser.add_argument(
         "--log-level",
@@ -835,30 +843,41 @@ def main() -> None:
     args = parser.parse_args()
     logger.setLevel(args.log_level)
 
-    # Parse the raw metadata from the command line arguments.
-    raw_metadata: dict | None = None
-    if args.metadata_file is not None and args.metadata is not None:
-        raise ValueError("Cannot specify both --metadata and --metadata-file")
-    elif args.metadata_file is not None:
-        with open(args.metadata_file, "r") as f:
-            raw_metadata = json.load(f)
-    elif args.metadata is not None:
-        raw_metadata = json.loads(args.metadata)
-    elif (metadata_path := Path(args.urdf_path).parent / "metadata.json").exists():
-        logger.warning("Using metadata from %s", metadata_path)
-        with open(metadata_path, "r") as f:
-            raw_metadata = json.load(f)
+    # Load joint metadata
+    if args.joint_metadata is not None:
+        try:
+            with open(args.joint_metadata, "r") as f:
+                joint_metadata = json.load(f)["joint_name_to_metadata"]
+                for key, value in joint_metadata.items():
+                    joint_metadata[key] = JointMetadata.from_dict(value)
+        except Exception as e:
+            logger.warning("Failed to load joint metadata from %s: %s", args.joint_metadata, e)
+            traceback.print_exc()
+            exit(1)
+    else:
+        joint_metadata = None
 
-    metadata: ConversionMetadata | None = (
-        None if raw_metadata is None else ConversionMetadata.model_validate(raw_metadata, strict=True)
-    )
+    # Load actuator metadata
+    if args.actuator_metadata is not None:
+        try:
+            with open(args.actuator_metadata, "r") as f:
+                actuator_metadata = json.load(f)
+                actuator_type = actuator_metadata["actuator_type"]
+                actuator_metadata = {actuator_type: ActuatorMetadata.from_dict(actuator_metadata)}
+        except Exception as e:
+            logger.warning("Failed to load actuator metadata from %s: %s", args.actuator_metadata, e)
+            traceback.print_exc()
+            exit(1)
+    else:
+        actuator_metadata = None
 
     convert_urdf_to_mjcf(
         urdf_path=args.urdf_path,
         mjcf_path=args.output,
-        metadata=metadata,
+        metadata_file=args.metadata,
+        joint_metadata=joint_metadata,
+        actuator_metadata=actuator_metadata,
     )
-
 
 if __name__ == "__main__":
     main()
