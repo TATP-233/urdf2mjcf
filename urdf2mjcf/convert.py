@@ -722,8 +722,8 @@ def convert_urdf_to_mjcf(
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     print(f"Added light...")
     add_light(mjcf_path)
-    # print(f"Convex decomposition...")
-    # convex_decomposition(mjcf_path)
+    print(f"Convex decomposition...")
+    convex_decomposition(mjcf_path)
     print(f"Split OBJ files by materials...")
     split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
     
