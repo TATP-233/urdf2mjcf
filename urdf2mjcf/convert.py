@@ -8,7 +8,8 @@ import traceback
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from urdf2mjcf.model import DefaultJointMetadata, JointMetadata, ConversionMetadata, ActuatorMetadata
+from urdf2mjcf.model import DefaultJointMetadata, ActuatorMetadata, ConversionMetadata
+from urdf2mjcf.postprocess.add_appendix import add_appendix
 from urdf2mjcf.postprocess.add_backlash import add_backlash
 from urdf2mjcf.postprocess.add_floor import add_floor
 from urdf2mjcf.postprocess.add_light import add_light
@@ -45,10 +46,9 @@ from urdf2mjcf.materials import Material, parse_mtl_name, get_obj_material_info,
 
 logger = logging.getLogger(__name__)
 
-
-def _get_empty_joint_and_actuator_metadata(
+def _get_empty_actuator_metadata(
     robot_elem: ET.Element,
-) -> tuple[dict[str, ActuatorMetadata], dict[str, JointMetadata]]:
+) -> dict[str, ActuatorMetadata]:
     """Create placeholder metadata for joints and actuators if none are provided.
 
     Each joint is simply assigned a "motor" actuator type, which has no other parameters.
@@ -60,14 +60,9 @@ def _get_empty_joint_and_actuator_metadata(
             continue
         actuator_meta[name] = ActuatorMetadata(
             actuator_type="motor",
-            kp=1.0,
-            kv=1.0,
-            ctrlrange=[0.0, 0.0],
-            forcerange=[0.0, 0.0],
         )
 
-    joint_meta = {"motor": JointMetadata(actuator_class="motor")}
-    return actuator_meta, joint_meta
+    return actuator_meta
 
 def convert_urdf_to_mjcf(
     urdf_path: str | Path,
@@ -75,8 +70,8 @@ def convert_urdf_to_mjcf(
     metadata_file: str | Path | None = None,
     *,
     default_metadata: DefaultJointMetadata | None = None,
-    joint_metadata: dict[str, JointMetadata] | None = None,
     actuator_metadata: dict[str, ActuatorMetadata] | None = None,
+    appendix_file: Path | None = None,
 ) -> None:
     """Converts a URDF file to an MJCF file.
 
@@ -85,8 +80,8 @@ def convert_urdf_to_mjcf(
         mjcf_path: The desired output MJCF file path.
         metadata_file: Optional path to metadata file.
         default_metadata: Optional default metadata.
-        joint_metadata: Optional joint metadata.
         actuator_metadata: Optional actuator metadata.
+        appendix_file: Optional appendix file.
     """
     urdf_path = Path(urdf_path)
     mjcf_path = Path(mjcf_path) if mjcf_path is not None else urdf_path.with_suffix(".mjcf")
@@ -109,15 +104,13 @@ def convert_urdf_to_mjcf(
     else:
         metadata = ConversionMetadata()
 
-    if actuator_metadata is None or joint_metadata is None:
+    if actuator_metadata is None:
         missing = []
         if actuator_metadata is None:
             missing.append("joint")
-        if joint_metadata is None:
-            missing.append("actuator")
         logger.warning("Missing %s metadata, falling back to single empty 'motor' class.", " and ".join(missing))
-        actuator_metadata, joint_metadata = _get_empty_joint_and_actuator_metadata(robot)
-    assert actuator_metadata is not None and joint_metadata is not None
+        actuator_metadata = _get_empty_actuator_metadata(robot)
+    assert actuator_metadata is not None
 
     # Parse materials from URDF - both from root level and from link visuals
     materials: dict[str, str] = {}
@@ -163,7 +156,7 @@ def convert_urdf_to_mjcf(
     add_size(mjcf_root)
     add_option(mjcf_root)
     add_visual(mjcf_root)
-    add_default(mjcf_root, metadata, joint_metadata, actuator_metadata)
+    add_default(mjcf_root, metadata, default_metadata)
 
     # Creates the worldbody element.
     worldbody = ET.SubElement(mjcf_root, "worldbody")
@@ -308,14 +301,11 @@ def convert_urdf_to_mjcf(
                 else:
                     raise ValueError(f"Unsupported joint type: {jtype}")
 
-                # Only for slide and hinge joints
-                j_attrib["ref"] = "0.0"
-
-                if j_name not in actuator_metadata:
-                    raise ValueError(f"Joint {j_name} not found in joint_metadata")
-                actuator_type_value = actuator_metadata[j_name].actuator_type
-                j_attrib["class"] = str(actuator_type_value)
-                logger.info("Joint %s assigned to class: %s", j_name, actuator_type_value)
+                if j_name in actuator_metadata:
+                    if actuator_metadata[j_name].joint_class is not None:
+                        joint_class_value = actuator_metadata[j_name].joint_class
+                        j_attrib["class"] = str(joint_class_value)
+                        logger.info("Joint %s assigned to class: %s", j_name, joint_class_value)
 
                 limit = joint.find("limit")
                 if limit is not None:
@@ -595,14 +585,50 @@ def convert_urdf_to_mjcf(
     for actuator_joint in actuator_joints:
         # The class name is the actuator type
         attrib: dict[str, str] = {"joint": actuator_joint.name}
-        if actuator_joint.name not in actuator_metadata:
-            raise ValueError(f"Actuator {actuator_joint.name} not found in joint_metadata")
-        actuator_type_value = actuator_metadata[actuator_joint.name].actuator_type
+        actuator_type_value = "motor"
+        if actuator_joint.name in actuator_metadata:
+            if actuator_metadata[actuator_joint.name].actuator_type is not None:
+                actuator_type_value = actuator_metadata[actuator_joint.name].actuator_type
+                logger.info("Joint %s assigned to class: %s", actuator_joint.name, actuator_type_value)
 
-        attrib["class"] = str(actuator_type_value)
-        logger.info(f"Creating actuator {actuator_joint.name}_ctrl with class: {actuator_type_value}")
+            if actuator_metadata[actuator_joint.name].joint_class is not None:
+                joint_class_value = actuator_metadata[actuator_joint.name].joint_class
+                attrib["class"] = str(joint_class_value)
+                logger.info("Joint %s assigned to class: %s", actuator_joint.name, joint_class_value)
+            
+            if actuator_metadata[actuator_joint.name].kp is not None:
+                attrib["kp"] = str(actuator_metadata[actuator_joint.name].kp)
+            if actuator_metadata[actuator_joint.name].kv is not None:
+                attrib["kv"] = str(actuator_metadata[actuator_joint.name].kv)
+            if actuator_metadata[actuator_joint.name].ctrlrange is not None:
+                attrib["ctrlrange"] = f"{actuator_metadata[actuator_joint.name].ctrlrange[0]} {actuator_metadata[actuator_joint.name].ctrlrange[1]}"
+            if actuator_metadata[actuator_joint.name].forcerange is not None:
+                attrib["forcerange"] = f"{actuator_metadata[actuator_joint.name].forcerange[0]} {actuator_metadata[actuator_joint.name].forcerange[1]}"
+            if actuator_metadata[actuator_joint.name].gear is not None:
+                attrib["gear"] = str(actuator_metadata[actuator_joint.name].gear)
 
-        ET.SubElement(actuator_elem, "motor", attrib={"name": f"{actuator_joint.name}_ctrl", **attrib})
+            logger.info(f"Creating actuator {actuator_joint.name}_ctrl with class: {actuator_type_value}")
+            ET.SubElement(actuator_elem, actuator_type_value, attrib={"name": f"{actuator_joint.name}_ctrl", **attrib})
+
+        else:
+            logger.info(f"Actuator {actuator_joint.name} not found in actuator_metadata")
+
+    # 对actuator_elem进行排序，按照在actuator_metadata出现的顺序排序
+    actuator_children = []
+    actuator_lst = list(actuator_elem)
+    for actuator in actuator_lst:
+        if actuator.attrib["joint"] in actuator_metadata.keys():
+            actuator_children.append(actuator)
+        else:
+            logger.warning(f"Warning: Actuator {actuator.attrib['joint']} not found in actuator_metadata")
+
+    actuator_children.sort(key=lambda x: list(actuator_metadata.keys()).index(x.attrib["joint"]))
+    
+    # 清空actuator_elem并重新添加排序后的子元素
+    for child in actuator_children:
+        actuator_elem.remove(child)
+    for child in actuator_children:
+        actuator_elem.append(child)
 
     # Add mesh assets to the asset section before saving
     asset_elem: ET.Element | None = mjcf_root.find("asset")
@@ -692,10 +718,13 @@ def convert_urdf_to_mjcf(
             logger.warning(f"Mesh file not found: {source_path}")
 
     # Save the initial MJCF file
+    print(f"Saving initial MJCF file to {mjcf_path}")
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
-    add_floor(mjcf_path)
+    print(f"Added light...")
     add_light(mjcf_path)
+    # print(f"Convex decomposition...")
     # convex_decomposition(mjcf_path)
+    print(f"Split OBJ files by materials...")
     split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
     
     # After post-processing, we need to copy any newly generated mesh files
@@ -780,6 +809,7 @@ def convert_urdf_to_mjcf(
         
         logger.info(f"Copied {len(copied_files)} mesh files after post-processing")
     
+    print(f"Checking shell meshes...")
     check_shell_meshes(mjcf_path)
     # update_mesh(mjcf_path)
 
@@ -791,6 +821,8 @@ def convert_urdf_to_mjcf(
         add_backlash(mjcf_path, metadata.backlash, metadata.backlash_damping)
     if metadata.floating_base:
         fix_base_joint(mjcf_path, metadata.freejoint)
+    if metadata.add_floor:
+        add_floor(mjcf_path)
     if metadata.remove_redundancies:
         remove_redundancies(mjcf_path)
     if (collision_geometries := metadata.collision_geometries) is not None:
@@ -802,7 +834,10 @@ def convert_urdf_to_mjcf(
             class_name=explicit_contacts.class_name,
             floor_name=metadata.floor_name,
         )
-
+    
+    if appendix_file is not None:
+        print(f"Adding appendix...")
+        add_appendix(mjcf_path, appendix_file)
 
 def main() -> None:
     """Parse command-line arguments and execute the URDF to MJCF conversion."""
@@ -831,16 +866,16 @@ def main() -> None:
         help="A JSON file containing default metadata.",
     )
     parser.add_argument(
-        "--joint-metadata",
-        type=str,
-        default=None,
-        help="A JSON file containing joint metadata.",
-    )
-    parser.add_argument(
         "--actuator-metadata",
         type=str,
         default=None,
         help="A JSON file containing actuator metadata.",
+    )
+    parser.add_argument(
+        "--appendix",
+        type=str,
+        default=None,
+        help="A XML file containing appendix.",
     )
     parser.add_argument(
         "--log-level",
@@ -855,27 +890,15 @@ def main() -> None:
     if args.default_metadata is not None:
         try:
             with open(args.default_metadata, "r") as f:
-                default_metadata = DefaultJointMetadata.from_dict(json.load(f))
+                default_metadata = json.load(f)
+                for key, value in default_metadata.items():
+                    default_metadata[key] = DefaultJointMetadata.from_dict(value)
         except Exception as e:
             logger.warning("Failed to load default metadata from %s: %s", args.default_metadata, e)
             traceback.print_exc()
             exit(1)
     else:
         default_metadata = None
-
-    # Load joint metadata
-    if args.joint_metadata is not None:
-        try:
-            with open(args.joint_metadata, "r") as f:
-                joint_metadata = json.load(f)
-                for key, value in joint_metadata.items():
-                    joint_metadata[key] = JointMetadata.from_dict(value)
-        except Exception as e:
-            logger.warning("Failed to load joint metadata from %s: %s", args.joint_metadata, e)
-            traceback.print_exc()
-            exit(1)
-    else:
-        joint_metadata = None
 
     # Load actuator metadata
     if args.actuator_metadata is not None:
@@ -890,14 +913,14 @@ def main() -> None:
             exit(1)
     else:
         actuator_metadata = None
-
+    
     convert_urdf_to_mjcf(
         urdf_path=args.urdf_path,
         mjcf_path=args.output,
         metadata_file=args.metadata,
         default_metadata=default_metadata,
-        joint_metadata=joint_metadata,
         actuator_metadata=actuator_metadata,
+        appendix_file=Path(args.appendix) if args.appendix is not None else None,
     )
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ class DefaultJointMetadata(BaseModel):
         return cls(joint=joint, actuator=actuator)
 
 class ActuatorMetadata(BaseModel):
+    joint_class: str | None = None
     actuator_type: str | None = None
     kp: float | None = None
     kv: float | None = None
@@ -59,29 +60,12 @@ class ActuatorMetadata(BaseModel):
         """Create JointParam from a plain dictionary."""
         return cls(**data)
 
-    class Config:
-        extra = "forbid"
-
-class JointMetadata(BaseModel):
-    stiffness: float | None = None
-    actuatorfrcrange: list[float] | None = None
-    margin: float | None = None
-    armature: float | None = None
-    damping: float | None = None
-    frictionloss: float | None = None
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "JointMetadata":
-        """Create ActuatorParam from a plain dictionary."""
-        return cls.model_validate(data)
-
 class SiteMetadata(BaseModel):
     name: str
     body_name: str
     site_type: SiteType | None = None
     size: list[float] | None = None
     pos: list[float] | None = None
-
 
 class ImuSensor(BaseModel):
     body_name: str
@@ -160,8 +144,8 @@ class CollisionGeometry(BaseModel):
 class ConversionMetadata(BaseModel):
     freejoint: bool = True
     collision_params: CollisionParams = CollisionParams()
-    joint_name_to_metadata: dict[str, ActuatorMetadata] | None = None
-    actuator_type_to_metadata: dict[str, JointMetadata] | None = None
+    # joint_name_to_metadata: dict[str, ActuatorMetadata] | None = None
+    # actuator_type_to_metadata: dict[str, JointMetadata] | None = None
     imus: list[ImuSensor] = []
     cameras: list[CameraSensor] = [
         CameraSensor(
@@ -190,11 +174,8 @@ class ConversionMetadata(BaseModel):
     maxhullvert: int | None = None
     angle: Angle = "radian"
     floor_name: str = "floor"
-    add_floor: bool = False
+    add_floor: bool = True
     backlash: float | None = None
     backlash_damping: float = 0.01
     height_offset: float = 0.0
     visualize_collision_meshes: bool = True
-
-    class Config:
-        extra = "forbid"
