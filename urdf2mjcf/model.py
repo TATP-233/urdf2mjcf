@@ -19,42 +19,61 @@ class CollisionParams(BaseModel):
     friction: list[float] = [1.0, 0.01, 0.01]
 
 
-class JointMetadata(BaseModel):
+class dJoint(BaseModel):
+    stiffness: float | None = None
+    actuatorfrcrange: list[float] | None = None
+    margin: float | None = None
+    armature: float | None = None
+    damping: float | None = None
+    frictionloss: float | None = None
+
+class dActuator(BaseModel):
     actuator_type: str | None = None
-    kp: float
-    kv: float
+    kp: float | None = None
+    kv: float | None = None
+    gear: float | None = None
+    ctrlrange: list[float] | None = None
+    forcerange: list[float] | None = None
+
+class DefaultJointMetadata(BaseModel):
+    joint: dJoint
+    actuator: dActuator
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DefaultJointMetadata":
+        """Create DefaultJointMetadata from a plain dictionary."""
+        joint = dJoint.model_validate(data["joint"])
+        actuator = dActuator.model_validate(data["actuator"])
+        return cls(joint=joint, actuator=actuator)
+
+class ActuatorMetadata(BaseModel):
+    actuator_type: str | None = None
+    kp: float | None = None
+    kv: float | None = None
+    gear: float | None = None
     ctrlrange: list[float] | None = None
     forcerange: list[float] | None = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "JointMetadata":
+    def from_dict(cls, data: dict) -> "ActuatorMetadata":
         """Create JointParam from a plain dictionary."""
         return cls(**data)
 
     class Config:
         extra = "forbid"
 
-
-class ActuatorMetadata(BaseModel):
-    actuator_type: str
-    sysid: str = ""
-    max_torque: float | None = None
-    max_velocity: float | None = None
-    armature: float | None = None
+class JointMetadata(BaseModel):
     stiffness: float | None = None
+    actuatorfrcrange: list[float] | None = None
+    margin: float | None = None
+    armature: float | None = None
     damping: float | None = None
     frictionloss: float | None = None
-    vin: float | None = None
-    kt: float | None = None
-    R: float | None = None
-    max_pwm: float | None = None
-    error_gain: float | None = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ActuatorMetadata":
+    def from_dict(cls, data: dict) -> "JointMetadata":
         """Create ActuatorParam from a plain dictionary."""
         return cls.model_validate(data)
-
 
 class SiteMetadata(BaseModel):
     name: str
@@ -141,8 +160,8 @@ class CollisionGeometry(BaseModel):
 class ConversionMetadata(BaseModel):
     freejoint: bool = True
     collision_params: CollisionParams = CollisionParams()
-    joint_name_to_metadata: dict[str, JointMetadata] | None = None
-    actuator_type_to_metadata: dict[str, ActuatorMetadata] | None = None
+    joint_name_to_metadata: dict[str, ActuatorMetadata] | None = None
+    actuator_type_to_metadata: dict[str, JointMetadata] | None = None
     imus: list[ImuSensor] = []
     cameras: list[CameraSensor] = [
         CameraSensor(
