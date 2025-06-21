@@ -19,44 +19,46 @@ class CollisionParams(BaseModel):
     friction: list[float] = [1.0, 0.01, 0.01]
 
 
-class JointMetadata(BaseModel):
-    actuator_type: str | None = None
-    id: int
-    nn_id: int
-    kp: float
-    kd: float
-    soft_torque_limit: float
-    min_angle_deg: float | None = None
-    max_angle_deg: float | None = None
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "JointMetadata":
-        """Create JointParam from a plain dictionary."""
-        return cls(**data)
-
-    class Config:
-        extra = "forbid"
-
-
-class ActuatorMetadata(BaseModel):
-    actuator_type: str
-    sysid: str = ""
-    max_torque: float | None = None
-    max_velocity: float | None = None
+class dJoint(BaseModel):
+    stiffness: float | None = None
+    actuatorfrcrange: list[float] | None = None
+    margin: float | None = None
     armature: float | None = None
     damping: float | None = None
     frictionloss: float | None = None
-    vin: float | None = None
-    kt: float | None = None
-    R: float | None = None
-    max_pwm: float | None = None
-    error_gain: float | None = None
+
+class dActuator(BaseModel):
+    actuator_type: str | None = None
+    kp: float | None = None
+    kv: float | None = None
+    gear: float | None = None
+    ctrlrange: list[float] | None = None
+    forcerange: list[float] | None = None
+
+class DefaultJointMetadata(BaseModel):
+    joint: dJoint
+    actuator: dActuator
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DefaultJointMetadata":
+        """Create DefaultJointMetadata from a plain dictionary."""
+        joint = dJoint.model_validate(data["joint"])
+        actuator = dActuator.model_validate(data["actuator"])
+        return cls(joint=joint, actuator=actuator)
+
+class ActuatorMetadata(BaseModel):
+    joint_class: str | None = None
+    actuator_type: str | None = None
+    kp: float | None = None
+    kv: float | None = None
+    gear: float | None = None
+    ctrlrange: list[float] | None = None
+    forcerange: list[float] | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "ActuatorMetadata":
-        """Create ActuatorParam from a plain dictionary."""
-        return cls.model_validate(data)
-
+        """Create JointParam from a plain dictionary."""
+        return cls(**data)
 
 class SiteMetadata(BaseModel):
     name: str
@@ -64,7 +66,6 @@ class SiteMetadata(BaseModel):
     site_type: SiteType | None = None
     size: list[float] | None = None
     pos: list[float] | None = None
-
 
 class ImuSensor(BaseModel):
     body_name: str
@@ -143,8 +144,8 @@ class CollisionGeometry(BaseModel):
 class ConversionMetadata(BaseModel):
     freejoint: bool = True
     collision_params: CollisionParams = CollisionParams()
-    joint_name_to_metadata: dict[str, JointMetadata] | None = None
-    actuator_type_to_metadata: dict[str, ActuatorMetadata] | None = None
+    # joint_name_to_metadata: dict[str, ActuatorMetadata] | None = None
+    # actuator_type_to_metadata: dict[str, JointMetadata] | None = None
     imus: list[ImuSensor] = []
     cameras: list[CameraSensor] = [
         CameraSensor(
@@ -173,11 +174,8 @@ class ConversionMetadata(BaseModel):
     maxhullvert: int | None = None
     angle: Angle = "radian"
     floor_name: str = "floor"
-    add_floor: bool = False
+    add_floor: bool = True
     backlash: float | None = None
     backlash_damping: float = 0.01
     height_offset: float = 0.0
     visualize_collision_meshes: bool = True
-
-    class Config:
-        extra = "forbid"
