@@ -98,6 +98,7 @@ def convert_urdf_to_mjcf(
         try:
             with open(metadata_file, "r") as f:
                 metadata = ConversionMetadata.model_validate_json(f.read())
+                print(metadata)
         except Exception as e:
             logger.warning("Failed to load metadata from %s: %s", metadata_file, e)
             metadata = ConversionMetadata()
@@ -819,7 +820,7 @@ def convert_urdf_to_mjcf(
         make_degrees(mjcf_path)
     if metadata.backlash:
         add_backlash(mjcf_path, metadata.backlash, metadata.backlash_damping)
-    if metadata.floating_base:
+    if metadata.freejoint:
         fix_base_joint(mjcf_path, metadata.freejoint)
     if metadata.add_floor:
         add_floor(mjcf_path)
