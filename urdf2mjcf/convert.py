@@ -98,7 +98,6 @@ def convert_urdf_to_mjcf(
         try:
             with open(metadata_file, "r") as f:
                 metadata = ConversionMetadata.model_validate_json(f.read())
-                print(metadata)
         except Exception as e:
             logger.warning("Failed to load metadata from %s: %s", metadata_file, e)
             metadata = ConversionMetadata()
