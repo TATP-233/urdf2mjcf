@@ -32,6 +32,7 @@ dependencies = [
     "coacd",
     "trimesh",
     "fast-simplification",
+    "pillow"
 ]
 
 [project.optional-dependencies]

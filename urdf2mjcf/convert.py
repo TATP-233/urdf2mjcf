@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from urdf2mjcf.model import ActuatorMetadata, ConversionMetadata, JointMetadata
+from urdf2mjcf.model import DefaultJointMetadata, JointMetadata, ConversionMetadata, ActuatorMetadata
 from urdf2mjcf.postprocess.add_backlash import add_backlash
 from urdf2mjcf.postprocess.add_floor import add_floor
 from urdf2mjcf.postprocess.add_light import add_light
@@ -48,17 +48,17 @@ logger = logging.getLogger(__name__)
 
 def _get_empty_joint_and_actuator_metadata(
     robot_elem: ET.Element,
-) -> tuple[dict[str, JointMetadata], dict[str, ActuatorMetadata]]:
+) -> tuple[dict[str, ActuatorMetadata], dict[str, JointMetadata]]:
     """Create placeholder metadata for joints and actuators if none are provided.
 
     Each joint is simply assigned a "motor" actuator type, which has no other parameters.
     """
-    joint_meta: dict[str, JointMetadata] = {}
-    for idx, joint in enumerate(robot_elem.findall("joint")):
+    actuator_meta: dict[str, ActuatorMetadata] = {}
+    for joint in robot_elem.findall("joint"):
         name = joint.attrib.get("name")
         if not name:
             continue
-        joint_meta[name] = JointMetadata(
+        actuator_meta[name] = ActuatorMetadata(
             actuator_type="motor",
             kp=1.0,
             kv=1.0,
@@ -66,14 +66,15 @@ def _get_empty_joint_and_actuator_metadata(
             forcerange=[0.0, 0.0],
         )
 
-    actuator_meta = {"motor": ActuatorMetadata(actuator_type="motor")}
-    return joint_meta, actuator_meta
+    joint_meta = {"motor": JointMetadata(actuator_class="motor")}
+    return actuator_meta, joint_meta
 
 def convert_urdf_to_mjcf(
     urdf_path: str | Path,
     mjcf_path: str | Path | None = None,
     metadata_file: str | Path | None = None,
     *,
+    default_metadata: DefaultJointMetadata | None = None,
     joint_metadata: dict[str, JointMetadata] | None = None,
     actuator_metadata: dict[str, ActuatorMetadata] | None = None,
 ) -> None:
@@ -83,6 +84,7 @@ def convert_urdf_to_mjcf(
         urdf_path: The path to the URDF file.
         mjcf_path: The desired output MJCF file path.
         metadata_file: Optional path to metadata file.
+        default_metadata: Optional default metadata.
         joint_metadata: Optional joint metadata.
         actuator_metadata: Optional actuator metadata.
     """
@@ -107,15 +109,15 @@ def convert_urdf_to_mjcf(
     else:
         metadata = ConversionMetadata()
 
-    if joint_metadata is None or actuator_metadata is None:
+    if actuator_metadata is None or joint_metadata is None:
         missing = []
-        if joint_metadata is None:
-            missing.append("joint")
         if actuator_metadata is None:
+            missing.append("joint")
+        if joint_metadata is None:
             missing.append("actuator")
         logger.warning("Missing %s metadata, falling back to single empty 'motor' class.", " and ".join(missing))
-        joint_metadata, actuator_metadata = _get_empty_joint_and_actuator_metadata(robot)
-    assert joint_metadata is not None and actuator_metadata is not None
+        actuator_metadata, joint_metadata = _get_empty_joint_and_actuator_metadata(robot)
+    assert actuator_metadata is not None and joint_metadata is not None
 
     # Parse materials from URDF - both from root level and from link visuals
     materials: dict[str, str] = {}
@@ -309,9 +311,9 @@ def convert_urdf_to_mjcf(
                 # Only for slide and hinge joints
                 j_attrib["ref"] = "0.0"
 
-                if j_name not in joint_metadata:
+                if j_name not in actuator_metadata:
                     raise ValueError(f"Joint {j_name} not found in joint_metadata")
-                actuator_type_value = joint_metadata[j_name].actuator_type
+                actuator_type_value = actuator_metadata[j_name].actuator_type
                 j_attrib["class"] = str(actuator_type_value)
                 logger.info("Joint %s assigned to class: %s", j_name, actuator_type_value)
 
@@ -593,9 +595,9 @@ def convert_urdf_to_mjcf(
     for actuator_joint in actuator_joints:
         # The class name is the actuator type
         attrib: dict[str, str] = {"joint": actuator_joint.name}
-        if actuator_joint.name not in joint_metadata:
+        if actuator_joint.name not in actuator_metadata:
             raise ValueError(f"Actuator {actuator_joint.name} not found in joint_metadata")
-        actuator_type_value = joint_metadata[actuator_joint.name].actuator_type
+        actuator_type_value = actuator_metadata[actuator_joint.name].actuator_type
 
         attrib["class"] = str(actuator_type_value)
         logger.info(f"Creating actuator {actuator_joint.name}_ctrl with class: {actuator_type_value}")
@@ -823,6 +825,12 @@ def main() -> None:
         help="A JSON file containing conversion metadata (joint params and sensors).",
     )
     parser.add_argument(
+        "--default-metadata",
+        type=str,
+        default=None,
+        help="A JSON file containing default metadata.",
+    )
+    parser.add_argument(
         "--joint-metadata",
         type=str,
         default=None,
@@ -843,11 +851,23 @@ def main() -> None:
     args = parser.parse_args()
     logger.setLevel(args.log_level)
 
+    # Load default metadata
+    if args.default_metadata is not None:
+        try:
+            with open(args.default_metadata, "r") as f:
+                default_metadata = DefaultJointMetadata.from_dict(json.load(f))
+        except Exception as e:
+            logger.warning("Failed to load default metadata from %s: %s", args.default_metadata, e)
+            traceback.print_exc()
+            exit(1)
+    else:
+        default_metadata = None
+
     # Load joint metadata
     if args.joint_metadata is not None:
         try:
             with open(args.joint_metadata, "r") as f:
-                joint_metadata = json.load(f)["joint_name_to_metadata"]
+                joint_metadata = json.load(f)
                 for key, value in joint_metadata.items():
                     joint_metadata[key] = JointMetadata.from_dict(value)
         except Exception as e:
@@ -862,8 +882,8 @@ def main() -> None:
         try:
             with open(args.actuator_metadata, "r") as f:
                 actuator_metadata = json.load(f)
-                actuator_type = actuator_metadata["actuator_type"]
-                actuator_metadata = {actuator_type: ActuatorMetadata.from_dict(actuator_metadata)}
+                for key, value in actuator_metadata.items():
+                    actuator_metadata[key] = ActuatorMetadata.from_dict(value)
         except Exception as e:
             logger.warning("Failed to load actuator metadata from %s: %s", args.actuator_metadata, e)
             traceback.print_exc()
@@ -875,6 +895,7 @@ def main() -> None:
         urdf_path=args.urdf_path,
         mjcf_path=args.output,
         metadata_file=args.metadata,
+        default_metadata=default_metadata,
         joint_metadata=joint_metadata,
         actuator_metadata=actuator_metadata,
     )
