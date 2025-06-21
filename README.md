@@ -26,7 +26,7 @@ A powerful URDF to MJCF conversion tool with advanced mesh processing and roboti
 ```bash
 git clone https://github.com/TATP-233/urdf2mjcf.git
 cd urdf2mjcf
-pip install -e .
+pip install .
 ```
 
 ## 📖 Usage

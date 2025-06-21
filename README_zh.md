@@ -28,7 +28,7 @@
 ```bash
 git clone https://github.com/TATP-233/urdf2mjcf.git
 cd urdf2mjcf
-pip install -e .
+pip install .
 ```
 
 ## 📖 使用方法
