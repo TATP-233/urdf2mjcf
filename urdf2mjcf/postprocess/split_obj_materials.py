@@ -2,6 +2,7 @@
 
 import os
 import logging
+import argparse
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
@@ -111,6 +112,8 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
                     geom.export(submesh_name.as_posix(), include_texture=True, header=None)
                     logger.info(f"Saved submesh: {submesh_name.name} (material: {material_name})")
                 os.remove(obj_target_dir / "material.mtl")
+            os.remove(mtl_file)
+            os.remove(obj_file)
 
         except ImportError:
             logger.warning("trimesh not available, cannot split OBJ by materials")
@@ -320,3 +323,13 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
     # Save the updated MJCF file
     save_xml(mjcf_path, tree)
     logger.info(f"Updated MJCF file with split OBJ materials: {mjcf_path}") 
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Split OBJ files by materials and update MJCF to use separate geoms.")
+    parser.add_argument("mjcf_path", type=Path, help="Path to the MJCF file")
+    args = parser.parse_args()
+    split_obj_by_materials(args.mjcf_path)
+
+if __name__ == "__main__":
+    main()

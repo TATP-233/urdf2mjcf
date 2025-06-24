@@ -32,7 +32,8 @@ dependencies = [
     "coacd",
     "trimesh",
     "fast-simplification",
-    "pillow"
+    "pillow",
+    "pymeshlab"
 ]
 
 [project.optional-dependencies]
