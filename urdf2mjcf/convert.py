@@ -72,6 +72,7 @@ def convert_urdf_to_mjcf(
     default_metadata: DefaultJointMetadata | None = None,
     actuator_metadata: dict[str, ActuatorMetadata] | None = None,
     appendix_file: Path | None = None,
+    max_vertices: int = 5000,
 ) -> None:
     """Converts a URDF file to an MJCF file.
 
@@ -82,6 +83,7 @@ def convert_urdf_to_mjcf(
         default_metadata: Optional default metadata.
         actuator_metadata: Optional actuator metadata.
         appendix_file: Optional appendix file.
+        max_vertices: Maximum number of vertices in the mesh.
     """
     urdf_path = Path(urdf_path)
     mjcf_path = Path(mjcf_path) if mjcf_path is not None else urdf_path.with_suffix(".mjcf")
@@ -811,7 +813,7 @@ def convert_urdf_to_mjcf(
     
     print(f"Checking shell meshes...")
     check_shell_meshes(mjcf_path)
-    # update_mesh(mjcf_path)
+    update_mesh(mjcf_path, max_vertices)
 
     # Apply post-processing steps
     if metadata.angle != "radian":
@@ -883,6 +885,12 @@ def main() -> None:
         default=logging.INFO,
         help="The log level to use.",
     )
+    parser.add_argument(
+        "--max-vertices",
+        type=int,
+        default=5000,
+        help="Maximum number of vertices in the mesh.",
+    )
     args = parser.parse_args()
     logger.setLevel(args.log_level)
 
@@ -921,6 +929,7 @@ def main() -> None:
         default_metadata=default_metadata,
         actuator_metadata=actuator_metadata,
         appendix_file=Path(args.appendix) if args.appendix is not None else None,
+        max_vertices=args.max_vertices,
     )
 
 if __name__ == "__main__":
