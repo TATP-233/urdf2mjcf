@@ -73,6 +73,8 @@ def convert_urdf_to_mjcf(
     actuator_metadata: dict[str, ActuatorMetadata] | None = None,
     appendix_file: Path | None = None,
     max_vertices: int = 5000,
+    collision_only: bool = False,
+    convex_decompose: bool = True
 ) -> None:
     """Converts a URDF file to an MJCF file.
 
@@ -84,6 +86,8 @@ def convert_urdf_to_mjcf(
         actuator_metadata: Optional actuator metadata.
         appendix_file: Optional appendix file.
         max_vertices: Maximum number of vertices in the mesh.
+        collision_only: If true, use simplified collision geometry without visual appearance for visual representation.
+        convex_decompose: If true, run convex decomposition on the mesh.
     """
     urdf_path = Path(urdf_path)
     mjcf_path = Path(mjcf_path) if mjcf_path is not None else urdf_path.with_suffix(".mjcf")
@@ -132,23 +136,24 @@ def convert_urdf_to_mjcf(
             if rgba is not None:
                 materials[name] = rgba
 
-    # Get materials defined in link visual elements
-    for link in robot.findall("link"):
-        for visual in link.findall("visual"):
-            visual_material = visual.find("material")
-            if visual_material is None:
-                continue
-            elif visual_material.attrib.get("name") == "":
-                visual_material.attrib["name"] = "default_material"
+    if not collision_only:
+        # Get materials defined in link visual elements
+        for link in robot.findall("link"):
+            for visual in link.findall("visual"):
+                visual_material = visual.find("material")
+                if visual_material is None:
+                    continue
+                elif visual_material.attrib.get("name") == "":
+                    visual_material.attrib["name"] = "default_material"
 
-            name = visual_material.attrib.get("name")
-            if name is None:
-                continue
-            color = visual_material.find("color")
-            if color is not None:
-                rgba = color.attrib.get("rgba")
-                if rgba is not None:
-                    materials[name] = rgba
+                name = visual_material.attrib.get("name")
+                if name is None:
+                    continue
+                color = visual_material.find("color")
+                if color is not None:
+                    rgba = color.attrib.get("rgba")
+                    if rgba is not None:
+                        materials[name] = rgba
 
     # Create a new MJCF tree root element.
     mjcf_root: ET.Element = ET.Element("mujoco", attrib={"model": robot.attrib.get("name", "converted_robot")})
@@ -158,7 +163,7 @@ def convert_urdf_to_mjcf(
     add_size(mjcf_root)
     add_option(mjcf_root)
     add_visual(mjcf_root)
-    add_default(mjcf_root, metadata, default_metadata)
+    add_default(mjcf_root, metadata, default_metadata, collision_only)
 
     # Creates the worldbody element.
     worldbody = ET.SubElement(mjcf_root, "worldbody")
@@ -395,98 +400,99 @@ def convert_urdf_to_mjcf(
             ET.SubElement(body, "geom", attrib=collision_geom_attrib)
 
         # Process visual geometries.
-        visuals = link.findall("visual")
-        for idx, visual in enumerate(visuals):
-            origin_elem = visual.find("origin")
-            if origin_elem is not None:
-                pos_geom = origin_elem.attrib.get("xyz", "0 0 0")
-                rpy_geom = origin_elem.attrib.get("rpy", "0 0 0")
-                quat_geom = rpy_to_quat(rpy_geom)
-            else:
-                pos_geom = "0 0 0"
-                quat_geom = "1 0 0 0"
-            
-            visual_geom_elem: ET.Element | None = visual.find("geometry")
-            if visual_geom_elem is not None:
-                geom = handle_geom_element(visual_geom_elem, "1 1 1")
+        if not collision_only:
+            visuals = link.findall("visual")
+            for idx, visual in enumerate(visuals):
+                origin_elem = visual.find("origin")
+                if origin_elem is not None:
+                    pos_geom = origin_elem.attrib.get("xyz", "0 0 0")
+                    rpy_geom = origin_elem.attrib.get("rpy", "0 0 0")
+                    quat_geom = rpy_to_quat(rpy_geom)
+                else:
+                    pos_geom = "0 0 0"
+                    quat_geom = "1 0 0 0"
                 
-                # Standard single geom creation
-                name = f"{link_name}_visual"
-                if len(visuals) > 1:
-                    name = f"{name}_{idx}"
-                visual_geom_attrib: dict[str, str] = {"name": name, "pos": pos_geom, "quat": quat_geom}
-                
-                visual_geom_attrib["type"] = geom.type
-                if geom.type == "mesh" and geom.mesh is not None:
-                    visual_geom_attrib["mesh"] = geom.mesh
-                elif geom.size is not None:
-                    visual_geom_attrib["size"] = geom.size
+                visual_geom_elem: ET.Element | None = visual.find("geometry")
+                if visual_geom_elem is not None:
+                    geom = handle_geom_element(visual_geom_elem, "1 1 1")
                     
-                if geom.scale is not None:
-                    visual_geom_attrib["scale"] = geom.scale
-            else:
-                # No geometry element
-                name = f"{link_name}_visual"
-                if len(visuals) > 1:
-                    name = f"{name}_{idx}"
-                visual_geom_attrib = {
-                    "name": name,
-                    "pos": pos_geom,
-                    "quat": quat_geom,
-                    "type": "box",
-                    "size": "1 1 1"
-                }
-            
-            # Check URDF material first
-            assigned_material = "default_material"
-            material_elem = visual.find("material")
-            if material_elem is not None:
-                material_name = material_elem.attrib.get("name")
-                if material_name and material_name in materials:
-                    assigned_material = material_name
-            
-            # For mesh geoms, check if it's a single-material OBJ file
-            if geom.type == "mesh" and geom.mesh is not None and assigned_material == "default_material":
-                # Try to find the actual OBJ file to check its materials
-                obj_filename = None
-                for mesh_name, filename in mesh_assets.items():
-                    if mesh_name == geom.mesh:
-                        obj_filename = filename
-                        break
-                
-                if obj_filename and obj_filename.lower().endswith('.obj'):
-                    # Determine the actual OBJ file path
-                    obj_file_path = None
-                    if 'package://' in obj_filename:
-                        # Handle package:// paths
-                        package_path = obj_filename[len('package://'):]
-                        pkg_mesh_name = package_path.split('/')[0]
-                        sub_path = '/'.join(package_path.split('/')[1:])
-                        try:
-                            pkg_root = resolve_package_path(pkg_mesh_name, workspace_search_paths)
-                            if pkg_root:
-                                obj_file_path = pkg_root / sub_path
-                        except:
-                            obj_file_path = None
-                    else:
-                        # Regular path
-                        if obj_filename.startswith('/'):
-                            obj_file_path = Path(obj_filename)
-                        else:
-                            obj_file_path = urdf_dir / obj_filename
+                    # Standard single geom creation
+                    name = f"{link_name}_visual"
+                    if len(visuals) > 1:
+                        name = f"{name}_{idx}"
+                    visual_geom_attrib: dict[str, str] = {"name": name, "pos": pos_geom, "quat": quat_geom}
                     
-                    if obj_file_path:
-                        has_single_material, material_name = get_obj_material_info(obj_file_path)
-                        if has_single_material and material_name:
-                            # Create a material name that matches what split_obj_materials would create
-                            obj_stem = obj_file_path.stem
-                            single_material_name = f"{obj_stem}_{material_name}"
-                            assigned_material = single_material_name
-                            logger.info(f"Assigned single OBJ material {single_material_name} to geom {visual_geom_attrib['name']}")
+                    visual_geom_attrib["type"] = geom.type
+                    if geom.type == "mesh" and geom.mesh is not None:
+                        visual_geom_attrib["mesh"] = geom.mesh
+                    elif geom.size is not None:
+                        visual_geom_attrib["size"] = geom.size
                         
-            visual_geom_attrib["material"] = assigned_material
-            visual_geom_attrib["class"] = "visual"
-            ET.SubElement(body, "geom", attrib=visual_geom_attrib)
+                    if geom.scale is not None:
+                        visual_geom_attrib["scale"] = geom.scale
+                else:
+                    # No geometry element
+                    name = f"{link_name}_visual"
+                    if len(visuals) > 1:
+                        name = f"{name}_{idx}"
+                    visual_geom_attrib = {
+                        "name": name,
+                        "pos": pos_geom,
+                        "quat": quat_geom,
+                        "type": "box",
+                        "size": "1 1 1"
+                    }
+                
+                # Check URDF material first
+                assigned_material = "default_material"
+                material_elem = visual.find("material")
+                if material_elem is not None:
+                    material_name = material_elem.attrib.get("name")
+                    if material_name and material_name in materials:
+                        assigned_material = material_name
+                
+                # For mesh geoms, check if it's a single-material OBJ file
+                if geom.type == "mesh" and geom.mesh is not None and assigned_material == "default_material":
+                    # Try to find the actual OBJ file to check its materials
+                    obj_filename = None
+                    for mesh_name, filename in mesh_assets.items():
+                        if mesh_name == geom.mesh:
+                            obj_filename = filename
+                            break
+                    
+                    if obj_filename and obj_filename.lower().endswith('.obj'):
+                        # Determine the actual OBJ file path
+                        obj_file_path = None
+                        if 'package://' in obj_filename:
+                            # Handle package:// paths
+                            package_path = obj_filename[len('package://'):]
+                            pkg_mesh_name = package_path.split('/')[0]
+                            sub_path = '/'.join(package_path.split('/')[1:])
+                            try:
+                                pkg_root = resolve_package_path(pkg_mesh_name, workspace_search_paths)
+                                if pkg_root:
+                                    obj_file_path = pkg_root / sub_path
+                            except:
+                                obj_file_path = None
+                        else:
+                            # Regular path
+                            if obj_filename.startswith('/'):
+                                obj_file_path = Path(obj_filename)
+                            else:
+                                obj_file_path = urdf_dir / obj_filename
+                        
+                        if obj_file_path:
+                            has_single_material, material_name = get_obj_material_info(obj_file_path)
+                            if has_single_material and material_name:
+                                # Create a material name that matches what split_obj_materials would create
+                                obj_stem = obj_file_path.stem
+                                single_material_name = f"{obj_stem}_{material_name}"
+                                assigned_material = single_material_name
+                                logger.info(f"Assigned single OBJ material {single_material_name} to geom {visual_geom_attrib['name']}")
+                            
+                visual_geom_attrib["material"] = assigned_material
+                visual_geom_attrib["class"] = "visual"
+                ET.SubElement(body, "geom", attrib=visual_geom_attrib)
 
         # Recurse into child links.
         if link_name in parent_map:
@@ -580,7 +586,7 @@ def convert_urdf_to_mjcf(
                         logger.warning(f"Failed to parse single-material OBJ {obj_file_path}: {e}")
 
     # Add assets
-    add_assets(mjcf_root, materials, obj_materials, metadata.visualize_collision_meshes)
+    add_assets(mjcf_root, materials, obj_materials)
 
     # Replace the actuator block with one that uses positional control.
     actuator_elem = ET.SubElement(mjcf_root, "actuator")
@@ -724,10 +730,12 @@ def convert_urdf_to_mjcf(
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     print(f"Added light...")
     add_light(mjcf_path)
-    print(f"Convex decomposition...")
-    convex_decomposition(mjcf_path)
-    print(f"Split OBJ files by materials...")
-    split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
+    if convex_decompose:
+        print(f"Convex decomposition...")
+        convex_decomposition(mjcf_path)
+    if not collision_only:
+        print(f"Split OBJ files by materials...")
+        split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
     
     # After post-processing, we need to copy any newly generated mesh files
     # Re-parse the MJCF file to get the updated mesh assets
@@ -856,6 +864,16 @@ def main() -> None:
         help="The path to the output MJCF file.",
     )
     parser.add_argument(
+        "--collision-only",
+        action="store_true", 
+        help="If true, use simplified collision geometry without visual appearance for visual representation."
+    )
+    parser.add_argument(
+        "--no-convex-decompose",
+        action="store_true", 
+        help="If true, do not run convex decomposition on the mesh."
+    )
+    parser.add_argument(
         "--metadata",
         type=str,
         default=None,
@@ -930,6 +948,8 @@ def main() -> None:
         actuator_metadata=actuator_metadata,
         appendix_file=Path(args.appendix) if args.appendix is not None else None,
         max_vertices=args.max_vertices,
+        collision_only=args.collision_only,
+        convex_decompose=not args.no_convex_decompose
     )
 
 if __name__ == "__main__":
