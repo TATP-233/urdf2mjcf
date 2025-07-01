@@ -35,7 +35,8 @@ def add_compiler(root: ET.Element) -> None:
 def add_default(
     root: ET.Element,
     metadata: ConversionMetadata,
-    default_metadata: DefaultJointMetadata | None = None
+    default_metadata: DefaultJointMetadata | None = None,
+    collision_only: bool = False,
 ) -> None:
     """Add default settings with hierarchical structure for robot components."""
     default = ET.Element("default")
@@ -72,21 +73,22 @@ def add_default(
             ET.SubElement(sub_default, c_actuator.actuator_type, attrib=actuator_attrib)
 
     # Visual geometry class
-    visual_default = ET.SubElement(
-        robot_default,
-        "default",
-        attrib={"class": "visual"},
-    )
-    ET.SubElement(
-        visual_default,
-        "geom",
-        attrib={
-            "material": "visualgeom",
-            "contype": "0",
-            "conaffinity": "0",
-            "group": "2",
-        },
-    )
+    if not collision_only:
+        visual_default = ET.SubElement(
+            robot_default,
+            "default",
+            attrib={"class": "visual"},
+        )
+        ET.SubElement(
+            visual_default,
+            "geom",
+            attrib={
+                "material": "visualgeom",
+                "contype": "0",
+                "conaffinity": "0",
+                "group": "2",
+            },
+        )
 
     # Collision geometry class
     collision_default = ET.SubElement(
@@ -98,12 +100,12 @@ def add_default(
         collision_default,
         "geom",
         attrib={
-            "material": "collision_material",
+            "material": "default_material" if collision_only else "collision_material",
             "condim": str(metadata.collision_params.condim),
             "contype": str(metadata.collision_params.contype),
             "conaffinity": str(metadata.collision_params.conaffinity),
             "priority": str(metadata.collision_params.priority),
-            "group": "3",
+            "group": "3" if not collision_only else "2",
             "solref": " ".join(f"{x:.6g}" for x in metadata.collision_params.solref),
             "friction": " ".join(f"{x:.6g}" for x in metadata.collision_params.friction),
         },
@@ -248,14 +250,13 @@ def add_visual(root: ET.Element) -> None:
     #     },
     # )
 
-def add_assets(root: ET.Element, materials: dict[str, str], mtl_materials: dict[str, Material] = None, visualize_collision_meshes: bool = True) -> None:
+def add_assets(root: ET.Element, materials: dict[str, str], mtl_materials: dict[str, Material] = None) -> None:
     """Add texture and material assets to the MJCF root.
 
     Args:
         root: The MJCF root element.
         materials: Dictionary mapping material names to RGBA color strings.
         mtl_materials: Dictionary mapping material names to MTL Material objects.
-        visualize_collision_meshes: If True, add a visual element for collision meshes.
     """
     asset = root.find("asset")
     if asset is None:
@@ -322,7 +323,7 @@ def add_assets(root: ET.Element, materials: dict[str, str], mtl_materials: dict[
         "material",
         attrib={
             "name": "collision_material",
-            "rgba": "1.0 0.28 0.1 0.9" if visualize_collision_meshes else "0.0 0.0 0.0 0.0",
+            "rgba": "1.0 0.28 0.1 0.9",
         },
     )
 
