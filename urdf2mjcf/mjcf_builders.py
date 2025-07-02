@@ -48,10 +48,14 @@ def add_default(
             sub_default = ET.SubElement(robot_default, "default", attrib={"class": str(class_name)})
             joint_attrib = {}
             c_joint = class_metadata.joint
-            if c_joint.armature is not None:
-                joint_attrib["armature"] = str(c_joint.armature)
             if c_joint.stiffness is not None:
                 joint_attrib["stiffness"] = str(c_joint.stiffness)
+            if c_joint.actuatorfrcrange is not None and len(c_joint.actuatorfrcrange) == 2:
+                joint_attrib["actuatorfrcrange"] = f"{c_joint.actuatorfrcrange[0]} {c_joint.actuatorfrcrange[1]}"
+            if c_joint.margin is not None:
+                joint_attrib["margin"] = str(c_joint.margin)
+            if c_joint.armature is not None:
+                joint_attrib["armature"] = str(c_joint.armature)
             if c_joint.damping is not None:
                 joint_attrib["damping"] = str(c_joint.damping)
             if c_joint.frictionloss is not None:
@@ -67,6 +71,10 @@ def add_default(
                 actuator_attrib["kp"] = str(c_actuator.kp)
             if c_actuator.kv is not None:
                 actuator_attrib["kv"] = str(c_actuator.kv)
+            if c_actuator.gear is not None:
+                actuator_attrib["gear"] = str(c_actuator.gear)
+            if c_actuator.ctrlrange is not None and len(c_actuator.ctrlrange) == 2:
+                actuator_attrib["ctrlrange"] = f"{c_actuator.ctrlrange[0]} {c_actuator.ctrlrange[1]}"
             if c_actuator.forcerange is not None:
                 actuator_attrib["forcerange"] = f"{c_actuator.forcerange[0]} {c_actuator.forcerange[1]}"
 
@@ -222,15 +230,15 @@ def add_option(root: ET.Element) -> None:
         attrib={
             "timestep": "0.001",
             "gravity": "0 0 -9.81",
-            "density": "0",
-            "impratio": "20",
-            "viscosity": "0.00002",
-            "integrator": "implicitfast",
-            "cone": "elliptic",
-            "jacobian": "auto",
-            "solver": "Newton",
-            "iterations": "100",
-            "tolerance": "1e-8",
+            # "density": "0",
+            # "impratio": "20",
+            # "viscosity": "0.00002",
+            # "integrator": "implicitfast",
+            # "cone": "elliptic",
+            # "jacobian": "auto",
+            # "solver": "Newton",
+            # "iterations": "100",
+            # "tolerance": "1e-8",
         },
     )
 

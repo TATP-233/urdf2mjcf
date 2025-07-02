@@ -110,7 +110,7 @@ def validate_equality_constraints(equality_element: ET.Element, available_joints
         valid_constraints.append((joint1, joint2))
     
     if invalid_constraints:
-        logger.warning(f"Skipping: {len(invalid_constraints)} invalid joint constraints")
+        logger.info(f"Skipping: {len(invalid_constraints)} invalid joint constraints")
         for joint1, joint2 in invalid_constraints:
             logger.debug(f"  Invalid constraint: {joint1} <-> {joint2}")
     
@@ -151,7 +151,7 @@ def add_filtered_contact_constraints(mjcf_root: ET.Element, contact_element: ET.
             valid_count += 1
             logger.debug(f"Added contact exclusion: {body1} <-> {body2}")
         else:
-            logger.warning(f"Skipping <contact>: {body1} <-> {body2} (bodies not found)")
+            logger.info(f"Skipping <contact>: {body1} <-> {body2} (bodies not found)")
     
     logger.info(f"Added {valid_count}/{total_count} valid contact exclusions")
 
@@ -183,11 +183,11 @@ def add_filtered_sensor_constraints(mjcf_root: ET.Element, sensor_element: ET.El
         # Check if referenced joint/site exists
         valid = True
         if joint and joint not in available_joints:
-            logger.warning(f"Skipping <sensor>: '{sensor_name}' references non-existent joint '{joint}'")
+            logger.info(f"Skipping <sensor>: '{sensor_name}' references non-existent joint '{joint}'")
             valid = False
         
         if site and site not in available_sites:
-            logger.warning(f"Skipping <sensor>: '{sensor_name}' references non-existent site '{site}'")
+            logger.info(f"Skipping <sensor>: '{sensor_name}' references non-existent site '{site}'")
             valid = False
         
         if valid:
@@ -264,10 +264,12 @@ def merge_elements(parent: ET.Element, new_element: ET.Element) -> None:
         logger.info(f"Added new element: {new_element.tag}")
     else:
         # Element exists, merge children
+        for attr in new_element.attrib:
+            print(attr, new_element.attrib[attr])
+            existing_element.attrib[attr] = new_element.attrib[attr]
         for child in new_element:
             existing_element.append(child)
         logger.info(f"Merged children into existing element: {new_element.tag}")
-
 
 def add_filtered_equality_constraints(mjcf_root: ET.Element, equality_element: ET.Element, available_joints: Set[str]) -> None:
     """Add only valid equality constraints to the MJCF file.
@@ -296,7 +298,7 @@ def add_filtered_equality_constraints(mjcf_root: ET.Element, equality_element: E
             valid_count += 1
             logger.debug(f"Added constraint: {joint1} <-> {joint2}")
         else:
-            logger.warning(f"Skipping <equality>: {joint1} <-> {joint2} (joints not found)")
+            logger.info(f"Skipping <equality>: {joint1} <-> {joint2} (joints not found)")
     
     logger.info(f"Added {valid_count} valid equality constraints")
 
@@ -358,13 +360,13 @@ def add_appendix(mjcf_path: str | Path, appendix_path: str | Path) -> None:
             if should_add:
                 add_filtered_contact_constraints(mjcf_root, element, available_bodies)
             else:
-                logger.warning(f"Skipping: Skipping contact element due to validation failure")
+                logger.info(f"Skipping: Skipping contact element due to validation failure")
         elif element.tag == "sensor":
             should_add = validate_sensor_constraints(element, available_joints, available_sites)
             if should_add:
                 add_filtered_sensor_constraints(mjcf_root, element, available_joints, available_sites)
             else:
-                logger.warning(f"Skipping: Skipping sensor element due to validation failure")
+                logger.info(f"Skipping: Skipping sensor element due to validation failure")
         else:
             # For other elements, just merge them
             merge_elements(mjcf_root, element)

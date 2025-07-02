@@ -10,6 +10,8 @@ A powerful URDF to MJCF conversion tool with advanced mesh processing and roboti
 - 🎯 **Convex Decomposition**: Automatic collision mesh convex decomposition for improved simulation efficiency
 - 🏗️ **Mesh Simplification**: Automatic high-polygon mesh simplification for performance optimization
 - 📦 **Multi-format Support**: STL, OBJ and other mesh formats with automatic model file copying
+- ⚡ **Fast Processing Mode**: Collision-only mode and optional convex decomposition for rapid prototyping
+- 🔧 **Flexible Configuration**: Multiple file support for modular configuration management
 
 ## 🚀 Installation
 
@@ -34,6 +36,7 @@ pip install .
 ### Basic Conversion
 
 ```bash
+cd /path/to/your/robot-description/
 urdf2mjcf input.urdf --output output.xml
 ```
 
@@ -41,7 +44,27 @@ urdf2mjcf input.urdf --output output.xml
 
 ```bash
 # Using metadata file
-urdf2mjcf robot.urdf --output robot.xml --metadata-file metadata.json
+urdf2mjcf robot.urdf --output robot.xml --metadata metadata.json
+
+# Collision-only mode (simplified visual representation)
+urdf2mjcf robot.urdf --output robot.xml --collision-only
+
+# Skip convex decomposition (faster processing)
+urdf2mjcf robot.urdf --output robot.xml --no-convex-decompose
+
+# Using multiple configuration files
+urdf2mjcf robot.urdf --output robot.xml \
+  --metadata metadata.json \
+  --default-metadata base_defaults.json robot_defaults.json \
+  --actuator-metadata motors.json servos.json \
+  --appendix constraints.xml sensors.xml
+# Note that metadata is unique, and there can be multiple default-metadata, actuator metadata and appendix
+
+# Combined options for fast processing
+urdf2mjcf robot.urdf --output robot.xml \
+  --collision-only \
+  --no-convex-decompose \
+  --max-vertices 1000
 
 # Specifying output directory
 urdf2mjcf /path/to/robot.urdf --output /path/to/output/robot.xml
@@ -64,6 +87,25 @@ convert_urdf_to_mjcf(
     urdf_path="path/to/robot.urdf",
     mjcf_path="path/to/robot.xml",
     metadata_file="path/to/metadata.json"
+)
+
+# Fast processing mode
+convert_urdf_to_mjcf(
+    urdf_path="path/to/robot.urdf",
+    mjcf_path="path/to/robot.xml",
+    collision_only=True,           # Simplified visual representation
+    convex_decompose=False,        # Skip convex decomposition
+    max_vertices=1000              # Lower vertex limit for faster processing
+)
+
+# Conversion with multiple configuration files
+convert_urdf_to_mjcf(
+    urdf_path="path/to/robot.urdf",
+    mjcf_path="path/to/robot.xml",
+    metadata_file="path/to/metadata.json",
+    default_metadata={"joint_class": DefaultJointMetadata(...)},
+    actuator_metadata={"motor": ActuatorMetadata(...)},
+    appendix_files=[Path("constraints.xml"), Path("sensors.xml")]
 )
 ```
 
@@ -102,6 +144,36 @@ convert_urdf_to_mjcf(
 - **Material Separation**: Support for separating mesh sub-objects by material
 - **Color Mapping**: Automatic URDF material color mapping to MJCF
 - **Texture Support**: Preserves original texture mapping
+
+### 5. Multi-File Configuration Support
+
+- **Multiple Default Metadata**: Support for loading multiple default metadata files with merging
+- **Multiple Actuator Metadata**: Support for loading multiple actuator metadata files with merging  
+- **Multiple Appendix Files**: Support for applying multiple appendix XML files in sequence
+- **Smart Merging**: Later files override earlier ones for scalar fields, extend for list fields
+
+```bash
+# Example: Base configuration + robot-specific overrides
+urdf2mjcf robot.urdf \
+  --default-metadata base_joints.json specific_joints.json \
+  --actuator-metadata base_motors.json servo_motors.json \
+  --appendix base_constraints.xml gripper_constraints.xml
+```
+
+### 6. Fast Processing Mode
+
+- **Collision-Only Mode**: Use `--collision-only` to generate simplified visual representation using collision geometry
+- **Skip Convex Decomposition**: Use `--no-convex-decompose` to bypass convex decomposition for faster processing
+- **Vertex Limit Control**: Use `--max-vertices` to control mesh simplification threshold
+- **Rapid Prototyping**: Perfect for quick testing and iterative development
+
+```bash
+# Fast processing for rapid prototyping
+urdf2mjcf robot.urdf --collision-only --no-convex-decompose --max-vertices 500
+
+# Production-quality processing (default)
+urdf2mjcf robot.urdf --max-vertices 5000
+```
 
 ## 📁 Project Structure
 

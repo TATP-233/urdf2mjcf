@@ -170,7 +170,6 @@ class ConversionMetadata(BaseModel):
     explicit_contacts: ExplicitFloorContacts | None = None
     weld_constraints: list[WeldConstraint] = []
     remove_redundancies: bool = True
-    floating_base: bool = True
     maxhullvert: int | None = None
     angle: Angle = "radian"
     floor_name: str = "floor"
