@@ -71,7 +71,7 @@ def convert_urdf_to_mjcf(
     *,
     default_metadata: DefaultJointMetadata | None = None,
     actuator_metadata: dict[str, ActuatorMetadata] | None = None,
-    appendix_file: Path | None = None,
+    appendix_files: list[Path] | None = None,
     max_vertices: int = 5000,
     collision_only: bool = False,
     convex_decompose: bool = True
@@ -84,7 +84,7 @@ def convert_urdf_to_mjcf(
         metadata_file: Optional path to metadata file.
         default_metadata: Optional default metadata.
         actuator_metadata: Optional actuator metadata.
-        appendix_file: Optional appendix file.
+        appendix_files: Optional list of appendix files.
         max_vertices: Maximum number of vertices in the mesh.
         collision_only: If true, use simplified collision geometry without visual appearance for visual representation.
         convex_decompose: If true, run convex decomposition on the mesh.
@@ -845,9 +845,10 @@ def convert_urdf_to_mjcf(
             floor_name=metadata.floor_name,
         )
     
-    if appendix_file is not None:
+    if appendix_files is not None and len(appendix_files) > 0:
         print(f"Adding appendix...")
-        add_appendix(mjcf_path, appendix_file)
+        for appendix_file in appendix_files:
+            add_appendix(mjcf_path, appendix_file)
 
 def main() -> None:
     """Parse command-line arguments and execute the URDF to MJCF conversion."""
@@ -881,21 +882,21 @@ def main() -> None:
     )
     parser.add_argument(
         "--default-metadata",
-        type=str,
+        nargs='*',
         default=None,
-        help="A JSON file containing default metadata.",
+        help="JSON files containing default metadata. Multiple files will be merged, with later files overriding earlier ones.",
     )
     parser.add_argument(
         "--actuator-metadata",
-        type=str,
+        nargs='*',
         default=None,
-        help="A JSON file containing actuator metadata.",
+        help="JSON files containing actuator metadata. Multiple files will be merged, with later files overriding earlier ones.",
     )
     parser.add_argument(
         "--appendix",
-        type=str,
+        nargs='*',
         default=None,
-        help="A XML file containing appendix.",
+        help="XML files containing appendix. Multiple files will be applied in order.",
     )
     parser.add_argument(
         "--log-level",
@@ -913,40 +914,48 @@ def main() -> None:
     logger.setLevel(args.log_level)
 
     # Load default metadata
-    if args.default_metadata is not None:
-        try:
-            with open(args.default_metadata, "r") as f:
-                default_metadata = json.load(f)
-                for key, value in default_metadata.items():
-                    default_metadata[key] = DefaultJointMetadata.from_dict(value)
-        except Exception as e:
-            logger.warning("Failed to load default metadata from %s: %s", args.default_metadata, e)
-            traceback.print_exc()
-            exit(1)
-    else:
+    default_metadata = {}
+    if args.default_metadata is not None and len(args.default_metadata) > 0:
+        for metadata_file in args.default_metadata:
+            try:
+                with open(metadata_file, "r") as f:
+                    file_metadata = json.load(f)
+                    for key, value in file_metadata.items():
+                        default_metadata[key] = DefaultJointMetadata.from_dict(value)
+                logger.info(f"Loaded default metadata from {metadata_file}")
+            except Exception as e:
+                logger.warning("Failed to load default metadata from %s: %s", metadata_file, e)
+                traceback.print_exc()
+                exit(1)
+    
+    if not default_metadata:
         default_metadata = None
 
     # Load actuator metadata
-    if args.actuator_metadata is not None:
-        try:
-            with open(args.actuator_metadata, "r") as f:
-                actuator_metadata = json.load(f)
-                for key, value in actuator_metadata.items():
-                    actuator_metadata[key] = ActuatorMetadata.from_dict(value)
-        except Exception as e:
-            logger.warning("Failed to load actuator metadata from %s: %s", args.actuator_metadata, e)
-            traceback.print_exc()
-            exit(1)
-    else:
-        actuator_metadata = None
+    actuator_metadata = {}
+    if args.actuator_metadata is not None and len(args.actuator_metadata) > 0:
+        for metadata_file in args.actuator_metadata:
+            try:
+                with open(metadata_file, "r") as f:
+                    file_metadata = json.load(f)
+                    for key, value in file_metadata.items():
+                        actuator_metadata[key] = ActuatorMetadata.from_dict(value)
+                logger.info(f"Loaded actuator metadata from {metadata_file}")
+            except Exception as e:
+                logger.warning("Failed to load actuator metadata from %s: %s", metadata_file, e)
+                traceback.print_exc()
+                exit(1)
     
+    if not actuator_metadata:
+        actuator_metadata = None
+
     convert_urdf_to_mjcf(
         urdf_path=args.urdf_path,
         mjcf_path=args.output,
         metadata_file=args.metadata,
         default_metadata=default_metadata,
         actuator_metadata=actuator_metadata,
-        appendix_file=Path(args.appendix) if args.appendix is not None else None,
+        appendix_files=[Path(appendix_file) for appendix_file in args.appendix] if args.appendix is not None and len(args.appendix) > 0 else None,
         max_vertices=args.max_vertices,
         collision_only=args.collision_only,
         convex_decompose=not args.no_convex_decompose

@@ -1,5 +1,3 @@
-
-
 # urdf2mjcf
 
 一个功能强大的URDF到MJCF转换工具，支持高级网格处理和机器人仿真优化。
@@ -12,6 +10,8 @@
 - 🎯 **凸分解处理**：自动对collision mesh进行凸分解，提高仿真效率
 - 🏗️ **网格简化**：自动简化高多边形网格，优化性能
 - 📦 **多格式支持**：支持STL、OBJ等多种mesh格式，自动拷贝模型文件
+- ⚡ **快速处理模式**：collision-only模式和可选凸分解，适用于快速原型开发
+- 🔧 **灵活配置**：多文件支持，便于模块化配置管理
 
 ## 🚀 安装
 
@@ -36,6 +36,7 @@ pip install .
 ### 基本转换
 
 ```bash
+cd /path/to/your/robot-description/
 urdf2mjcf input.urdf --output output.xml
 ```
 
@@ -43,7 +44,27 @@ urdf2mjcf input.urdf --output output.xml
 
 ```bash
 # 使用元数据文件
-urdf2mjcf robot.urdf --output robot.xml --metadata-file metadata.json
+urdf2mjcf robot.urdf --output robot.xml --metadata metadata.json
+
+# 仅碰撞模式（简化视觉表示）
+urdf2mjcf robot.urdf --output robot.xml --collision-only
+
+# 跳过凸分解（加快处理速度）
+urdf2mjcf robot.urdf --output robot.xml --no-convex-decompose
+
+# 使用多个配置文件
+urdf2mjcf robot.urdf --output robot.xml \
+  --metadata metadata.json \
+  --default-metadata base_defaults.json robot_defaults.json \
+  --actuator-metadata motors.json servos.json \
+  --appendix constraints.xml sensors.xml
+# 注意metadata是唯一的，default-metadata、actuator-metadata和appendix可以有多个
+
+# 快速处理组合选项
+urdf2mjcf robot.urdf --output robot.xml \
+  --collision-only \
+  --no-convex-decompose \
+  --max-vertices 1000
 
 # 指定输出目录
 urdf2mjcf /path/to/robot.urdf --output /path/to/output/robot.xml
@@ -66,6 +87,25 @@ convert_urdf_to_mjcf(
     urdf_path="path/to/robot.urdf",
     mjcf_path="path/to/robot.xml",
     metadata_file="path/to/metadata.json"
+)
+
+# 快速处理模式
+convert_urdf_to_mjcf(
+    urdf_path="path/to/robot.urdf",
+    mjcf_path="path/to/robot.xml",
+    collision_only=True,           # 简化视觉表示
+    convex_decompose=False,        # 跳过凸分解
+    max_vertices=1000              # 降低顶点限制加快处理
+)
+
+# 使用多个配置文件的转换
+convert_urdf_to_mjcf(
+    urdf_path="path/to/robot.urdf",
+    mjcf_path="path/to/robot.xml",
+    metadata_file="path/to/metadata.json",
+    default_metadata={"joint_class": DefaultJointMetadata(...)},
+    actuator_metadata={"motor": ActuatorMetadata(...)},
+    appendix_files=[Path("constraints.xml"), Path("sensors.xml")]
 )
 ```
 
@@ -104,6 +144,36 @@ convert_urdf_to_mjcf(
 - **材质分离**：支持按材质分离mesh子对象
 - **颜色映射**：URDF材质颜色自动映射到MJCF
 - **纹理支持**：保持原始纹理映射
+
+### 5. 多文件配置支持
+
+- **多个默认元数据**：支持加载多个默认元数据文件并合并
+- **多个执行器元数据**：支持加载多个执行器元数据文件并合并  
+- **多个附录文件**：支持按顺序应用多个附录XML文件
+- **智能合并**：标量字段后面的文件覆盖前面的，列表字段进行扩展
+
+```bash
+# 示例：基础配置 + 机器人特定覆盖
+urdf2mjcf robot.urdf \
+  --default-metadata base_joints.json specific_joints.json \
+  --actuator-metadata base_motors.json servo_motors.json \
+  --appendix base_constraints.xml gripper_constraints.xml
+```
+
+### 6. 快速处理模式
+
+- **仅碰撞模式**：使用 `--collision-only` 生成使用碰撞几何的简化视觉表示
+- **跳过凸分解**：使用 `--no-convex-decompose` 跳过凸分解以加快处理速度
+- **顶点限制控制**：使用 `--max-vertices` 控制网格简化阈值
+- **快速原型开发**：适用于快速测试和迭代开发
+
+```bash
+# 快速处理模式用于原型开发
+urdf2mjcf robot.urdf --collision-only --no-convex-decompose --max-vertices 500
+
+# 生产质量处理（默认）
+urdf2mjcf robot.urdf --max-vertices 5000
+```
 
 ## 📁 项目结构
 
