@@ -206,10 +206,17 @@ def convert_urdf_to_mjcf(
     workspace_search_paths = []
     
     # Find workspace from URDF file location
-    workspace_from_urdf = find_workspace_from_path(urdf_dir)
+    workspace_from_urdf = find_workspace_from_path(urdf_path)
     if workspace_from_urdf:
         workspace_search_paths.append(workspace_from_urdf)
         logger.debug(f"Found ROS workspace from URDF location: {workspace_from_urdf}")
+    
+    # Also try to find the package root of the URDF file itself for local resource resolution
+    from urdf2mjcf.package_resolver import _default_resolver
+    package_root = _default_resolver._find_package_root_from_urdf_path(urdf_path)
+    if package_root and package_root not in workspace_search_paths:
+        workspace_search_paths.append(package_root)
+        logger.debug(f"Found package root from URDF location: {package_root}")
     
     def handle_geom_element(geom_elem: ET.Element | None, default_size: str) -> GeomElement:
         """Helper to handle geometry elements safely.
