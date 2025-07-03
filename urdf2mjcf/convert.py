@@ -609,8 +609,8 @@ def convert_urdf_to_mjcf(
             if actuator_metadata[actuator_joint.name].gear is not None:
                 attrib["gear"] = str(actuator_metadata[actuator_joint.name].gear)
 
-            logger.info(f"Creating actuator {actuator_joint.name}_ctrl with class: {actuator_type_value}")
-            ET.SubElement(actuator_elem, actuator_type_value, attrib={"name": f"{actuator_joint.name}_ctrl", **attrib})
+            logger.info(f"Creating actuator {actuator_joint.name} with class: {actuator_type_value}")
+            ET.SubElement(actuator_elem, actuator_type_value, attrib={"name": f"{actuator_joint.name}", **attrib})
 
         else:
             logger.info(f"Actuator {actuator_joint.name} not found in actuator_metadata")
