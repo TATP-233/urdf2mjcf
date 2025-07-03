@@ -170,7 +170,6 @@ class ConversionMetadata(BaseModel):
     explicit_contacts: ExplicitFloorContacts | None = None
     weld_constraints: list[WeldConstraint] = []
     remove_redundancies: bool = True
-    floating_base: bool = True
     maxhullvert: int | None = None
     angle: Angle = "radian"
     floor_name: str = "floor"
@@ -178,4 +177,3 @@ class ConversionMetadata(BaseModel):
     backlash: float | None = None
     backlash_damping: float = 0.01
     height_offset: float = 0.0
-    visualize_collision_meshes: bool = True
