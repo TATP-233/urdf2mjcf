@@ -52,6 +52,92 @@ class PackageResolver:
             self._ros2_available = False
             return False
     
+    def _is_ros_workspace(self, path: Path) -> bool:
+        """
+        Check if a path is a ROS workspace more accurately.
+        
+        A ROS workspace should have:
+        - A src directory that contains ROS packages (with package.xml), OR
+        - A src directory and at least one of build/devel/install directories
+        
+        Args:
+            path: Path to check
+            
+        Returns:
+            True if it's a ROS workspace, False otherwise
+        """
+        if not path.exists() or not path.is_dir():
+            return False
+        
+        src_dir = path / "src"
+        if not src_dir.exists():
+            return False
+        
+        # Check if src contains ROS packages
+        try:
+            for item in src_dir.iterdir():
+                if item.is_dir() and (item / "package.xml").exists():
+                    logger.debug(f"Found ROS package in src: {item}")
+                    return True
+        except (PermissionError, OSError):
+            pass
+        
+        # Check if it has build artifacts (indicating it's a workspace that has been built)
+        build_indicators = ["build", "devel", "install"]
+        if any((path / d).exists() for d in build_indicators):
+            logger.debug(f"Found workspace build artifacts: {[d for d in build_indicators if (path / d).exists()]}")
+            return True
+        
+        return False
+    
+    def _find_package_root_from_urdf_path(self, urdf_path: Path) -> Optional[Path]:
+        """
+        Find the ROS package root directory from a URDF file path.
+        
+        URDF files are typically located in:
+        - package_root/urdf/file.urdf
+        - package_root/file.urdf
+        - package_root/robots/file.urdf
+        - etc.
+        
+        Args:
+            urdf_path: Path to the URDF file
+            
+        Returns:
+            Path to the package root, or None if not found
+        """
+        current = urdf_path.parent.resolve()
+        
+        # Traverse up the directory tree looking for package.xml
+        while current.parent != current:  # Not at filesystem root
+            if (current / "package.xml").exists():
+                logger.debug(f"Found package root from URDF path: {current}")
+                return current
+            current = current.parent
+        
+        return None
+    
+    def _find_workspace_from_package_path(self, package_path: Path) -> Optional[Path]:
+        """
+        Find the workspace root from a package path.
+        
+        Args:
+            package_path: Path to a ROS package
+            
+        Returns:
+            Path to workspace root, or None if not found
+        """
+        current = package_path.parent
+        
+        # Traverse up the directory tree looking for workspace
+        while current.parent != current:  # Not at filesystem root
+            if self._is_ros_workspace(current):
+                logger.debug(f"Found workspace root from package path: {current}")
+                return current
+            current = current.parent
+        
+        return None
+    
     def _find_workspace_root(self, start_path: Path) -> Optional[Path]:
         """
         Find the ROS workspace root by traversing up from the given path.
@@ -62,20 +148,24 @@ class PackageResolver:
         Returns:
             Path to workspace root, or None if not found
         """
+        # First, try to find package root if start_path is a URDF file
+        if start_path.is_file() and start_path.suffix.lower() in ['.urdf', '.xacro']:
+            package_root = self._find_package_root_from_urdf_path(start_path)
+            if package_root:
+                # Found package root, now find workspace from package
+                workspace_root = self._find_workspace_from_package_path(package_root)
+                if workspace_root:
+                    return workspace_root
+                # If no workspace found from package, continue with general search
+                start_path = package_root
+        
         current = start_path.resolve()
         
-        # Traverse up the directory tree
+        # Traverse up the directory tree looking for workspace
         while current.parent != current:  # Not at filesystem root
-            # Check if this looks like a ROS workspace
-            if any((current / d).exists() for d in ["src", "build", "devel", "install", "log"]):
-                logger.debug(f"Found potential workspace root: {current}")
+            if self._is_ros_workspace(current):
+                logger.debug(f"Found workspace root: {current}")
                 return current
-            
-            # Check if we're in a src directory of a workspace
-            if current.name == "src" and any((current.parent / d).exists() for d in ["build", "devel", "install"]):
-                logger.debug(f"Found workspace root from src: {current.parent}")
-                return current.parent
-                
             current = current.parent
         
         return None
