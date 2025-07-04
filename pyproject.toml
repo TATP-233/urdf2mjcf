@@ -9,7 +9,7 @@ description = "Convert URDF to MJCF with advanced mesh processing"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Chenyu Cao", email = "ruziniuuuuu@gmail.com"}
+    {name = "Yufei Jia", email = "jyf23@mails.tsinghua.edu.cn"}
 ]
 keywords = ["urdf", "mjcf", "mujoco", "robotics", "simulation"]
 classifiers = [
