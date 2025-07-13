@@ -76,17 +76,14 @@ class PackageResolver:
         # Check if src contains ROS packages
         try:
             for item in src_dir.iterdir():
-                if item.is_dir() and (item / "package.xml").exists():
+                if not item.is_dir() and item.match("CMakeLists.txt"):
+                    logger.debug(f"Found ROS package in src: {item}")
+                    return True
+                elif item.is_dir() and (item / "package.xml").exists():
                     logger.debug(f"Found ROS package in src: {item}")
                     return True
         except (PermissionError, OSError):
             pass
-        
-        # Check if it has build artifacts (indicating it's a workspace that has been built)
-        build_indicators = ["build", "devel", "install"]
-        if any((path / d).exists() for d in build_indicators):
-            logger.debug(f"Found workspace build artifacts: {[d for d in build_indicators if (path / d).exists()]}")
-            return True
         
         return False
     
@@ -110,7 +107,7 @@ class PackageResolver:
         
         # Traverse up the directory tree looking for package.xml
         while current.parent != current:  # Not at filesystem root
-            if (current / "package.xml").exists():
+            if (current / "package.xml").exists() and (current / "CMakeLists.txt").exists():
                 logger.debug(f"Found package root from URDF path: {current}")
                 return current
             current = current.parent
@@ -186,7 +183,7 @@ class PackageResolver:
             return None
         
         # Check if current directory is the package we're looking for
-        if search_dir.name == package_name and (search_dir / "package.xml").exists():
+        if search_dir.name == package_name and (search_dir / "package.xml").exists() and (search_dir / "CMakeLists.txt").exists():
             logger.debug(f"Found package '{package_name}' at: {search_dir}")
             return search_dir
         
@@ -207,10 +204,9 @@ class PackageResolver:
         
         return None
     
-    def _find_package_by_path_pattern(self, package_name: str, search_paths: Optional[List[Path]] = None) -> Optional[Path]:
+    def _find_package_by_path_pattern(self, package_name: str, search_paths:List[Path] = []) -> Optional[Path]:
         """Find package by searching common ROS workspace patterns."""
-        if search_paths is None:
-            search_paths = self._get_default_search_paths()
+        search_paths = self._add_default_search_paths(search_paths)
         
         for search_path in search_paths:
             if not search_path.exists():
@@ -226,7 +222,7 @@ class PackageResolver:
             for candidate in candidate_paths:
                 if candidate.exists() and candidate.is_dir():
                     # Verify it's a ROS package by checking for package.xml
-                    if (candidate / "package.xml").exists():
+                    if (candidate / "package.xml").exists() and (candidate / "CMakeLists.txt").exists():
                         logger.debug(f"Found package '{package_name}' at: {candidate}")
                         return candidate
             
@@ -244,49 +240,8 @@ class PackageResolver:
         
         return None
     
-    def _get_default_search_paths(self) -> List[Path]:
+    def _add_default_search_paths(self, search_paths: List[Path] = []) -> List[Path]:
         """Get default search paths based on operating system and environment."""
-        search_paths = []
-        
-        # ROS environment variables
-        ros_workspace_paths = [
-            os.environ.get('ROS_WORKSPACE'),
-            os.environ.get('COLCON_WS'),
-            os.environ.get('CATKIN_WS'),
-        ]
-        
-        for ws_path in ros_workspace_paths:
-            if ws_path:
-                search_paths.append(Path(ws_path))
-        
-        # Common ROS installation paths
-        system = platform.system().lower()
-        
-        if system == "linux":
-            # ROS1 and ROS2 standard installation paths
-            search_paths.extend([
-                Path("/opt/ros/noetic"),  # ROS1 Noetic
-                Path("/opt/ros/melodic"),  # ROS1 Melodic
-                Path("/opt/ros/humble"),   # ROS2 Humble
-                Path("/opt/ros/iron"),     # ROS2 Iron
-                Path("/opt/ros/jazzy"),    # ROS2 Jazzy
-                Path("/opt/ros/rolling"),  # ROS2 Rolling
-            ])
-        elif system == "windows":
-            # Windows ROS installation paths
-            search_paths.extend([
-                Path("C:/opt/ros/noetic"),
-                Path("C:/opt/ros/humble"),
-                Path("C:/dev/ros2"),
-            ])
-        elif system == "darwin":  # macOS
-            # macOS ROS installation paths (often via Homebrew or custom)
-            search_paths.extend([
-                Path("/usr/local/opt/ros"),
-                Path("/opt/homebrew/opt/ros"),
-                Path(os.path.expanduser("~/ros")),
-            ])
-        
         # Current working directory and parent directories (for development)
         current_path = Path.cwd()
         search_paths.extend([
@@ -304,13 +259,13 @@ class PackageResolver:
         logger.debug(f"Default search paths: {unique_paths}")
         return unique_paths
     
-    def resolve_package_path(self, package_name: str, search_paths: Optional[List[Union[str, Path]]] = None) -> Optional[Path]:
+    def resolve_package_path(self, package_name: str, search_paths: List[Union[str, Path]] = []) -> Optional[Path]:
         """
         Resolve the path to a ROS package using multiple strategies.
         
         Args:
             package_name: Name of the ROS package
-            search_paths: Optional list of additional paths to search
+            search_paths: list of additional paths to search
             
         Returns:
             Path to the package directory, or None if not found
@@ -337,7 +292,7 @@ class PackageResolver:
                 logger.debug(f"ROS2 ament_index failed for package '{package_name}': {e}")
         
         # Strategy 3: Search by path patterns
-        converted_search_paths = None
+        converted_search_paths = []
         if search_paths:
             converted_search_paths = [Path(p) for p in search_paths]
         
@@ -348,7 +303,7 @@ class PackageResolver:
         logger.warning(f"Could not resolve package path for: {package_name} in {converted_search_paths}")
         return None
     
-    def resolve_package_resource(self, package_url: str, search_paths: Optional[List[Union[str, Path]]] = None) -> Optional[Path]:
+    def resolve_package_resource(self, package_url: str, search_paths: List[Union[str, Path]] = []) -> Optional[Path]:
         """
         Resolve a package:// URL to an absolute file path.
         
@@ -392,7 +347,7 @@ class PackageResolver:
 _default_resolver = PackageResolver()
 
 
-def resolve_package_path(package_name: str, search_paths: Optional[List[Union[str, Path]]] = None) -> Optional[Path]:
+def resolve_package_path(package_name: str, search_paths: List[Union[str, Path]] = []) -> Optional[Path]:
     """
     Convenience function to resolve a ROS package path.
     
@@ -406,7 +361,7 @@ def resolve_package_path(package_name: str, search_paths: Optional[List[Union[st
     return _default_resolver.resolve_package_path(package_name, search_paths)
 
 
-def resolve_package_resource(package_url: str, search_paths: Optional[List[Union[str, Path]]] = None) -> Optional[Path]:
+def resolve_package_resource(package_url: str, search_paths: List[Union[str, Path]] = []) -> Optional[Path]:
     """
     Convenience function to resolve a package:// URL to an absolute file path.
     

@@ -5,7 +5,7 @@ import logging
 import argparse
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+import traceback
 
 import trimesh
 from urdf2mjcf.materials import Material, parse_mtl_name
@@ -119,7 +119,8 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
             logger.warning("trimesh not available, cannot split OBJ by materials")
         except Exception as e:
             logger.warning(f"Failed to split OBJ file {obj_file} by materials: {e}")
-                        
+            traceback.print_exc()
+
     except Exception as e:
         logger.error(f"Failed to process MTL file {mtl_file}: {e}")
     
