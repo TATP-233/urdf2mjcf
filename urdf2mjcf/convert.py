@@ -1,5 +1,6 @@
 """Converts URDF files to MJCF files."""
 
+import os
 import json
 import shutil
 import logging
@@ -41,7 +42,7 @@ from urdf2mjcf.mjcf_builders import (
     add_assets,
     ROBOT_CLASS
 )
-from urdf2mjcf.package_resolver import resolve_package_path, resolve_package_resource, find_workspace_from_path
+from urdf2mjcf.package_resolver import resolve_package_path, find_workspace_from_path
 from urdf2mjcf.materials import Material, parse_mtl_name, get_obj_material_info, copy_obj_with_mtl
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ def convert_urdf_to_mjcf(
     default_metadata: DefaultJointMetadata | None = None,
     actuator_metadata: dict[str, ActuatorMetadata] | None = None,
     appendix_files: list[Path] | None = None,
-    max_vertices: int = 5000,
+    max_vertices: int = 1000000,
     collision_only: bool = False,
     convex_decompose: bool = True
 ) -> None:
@@ -659,6 +660,9 @@ def convert_urdf_to_mjcf(
                 # Remove the package name part, keep the rest as relative path
                 relative_path = '/'.join(parts[1:])
                 filename = relative_path
+        elif filename.startswith('/'):
+            filename = os.path.relpath(filename, urdf_dir)
+
         # mesh_name already should be the stem (without .obj), 
         # so it will match the geom references
         ET.SubElement(asset_elem, "mesh", attrib={"name": mesh_name, "file": filename})
@@ -672,11 +676,6 @@ def convert_urdf_to_mjcf(
     processed_files = set()
     
     for mesh_name, filename in mesh_assets.items():
-        # Skip files that have been processed and are already in the correct subdirectory structure
-        if not filename.startswith('package://') and ('/' in filename):
-            # This file has been processed and placed in subdirectory structure, skip copying to root
-            continue
-            
         # Determine source path based on whether it's a package:// URL or regular path
         source_path: Path | None = None
         target_path: Path | None = None
@@ -695,23 +694,18 @@ def convert_urdf_to_mjcf(
                     source_path = None
             except:
                 source_path = None
-            target_path = target_mesh_dir / sub_path
+        elif filename.startswith('/'):
+            sub_path = os.path.relpath(filename, urdf_dir)
+            source_path = Path(filename)
         else:
-            # For non-package paths, try to resolve relative to URDF directory
-            if filename.startswith('/'):
-                # Absolute path
-                source_path = Path(filename)
-            else:
-                # Relative path - relative to URDF file directory
-                source_path = (urdf_dir / filename).resolve()
-            
-            # If the path doesn't exist, log a warning but continue
-            if source_path and not source_path.exists():
-                logger.warning(f"Mesh file not found: {source_path} (from URDF path: {filename})")
-                continue
-                
-            target_path = target_mesh_dir / Path(filename).name
-        
+            sub_path = filename
+            source_path = (urdf_dir / filename).resolve()
+
+        if source_path and not source_path.exists():
+            logger.error(f"Mesh file not found: {source_path} (from URDF path: {filename})")
+            raise FileNotFoundError(f"Mesh file not found: {source_path} (from URDF path: {filename})")
+
+        target_path = target_mesh_dir / sub_path
         # Copy the file if source exists and target is valid
         if source_path and target_path and source_path.exists():
             if not target_path.parent.exists():
@@ -874,7 +868,7 @@ def main() -> None:
     parser.add_argument(
         "--collision-only",
         action="store_true", 
-        help="If true, use simplified collision geometry without visual appearance for visual representation."
+        help="If true, use collision geometry without visual appearance for visual representation."
     )
     parser.add_argument(
         "--no-convex-decompose",
@@ -914,7 +908,7 @@ def main() -> None:
     parser.add_argument(
         "--max-vertices",
         type=int,
-        default=5000,
+        default=1000000,
         help="Maximum number of vertices in the mesh.",
     )
     args = parser.parse_args()

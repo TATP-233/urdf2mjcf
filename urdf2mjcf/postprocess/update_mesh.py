@@ -13,7 +13,7 @@ from urdf2mjcf.utils import save_xml
 
 logger = logging.getLogger(__name__)
 
-def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: int = 5000) -> None:
+def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: int) -> None:
     """Update the mesh assets of the MJCF file.
 
     Args:
@@ -218,7 +218,7 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
         for file_path in deleted_files:
             logger.info(f"  - {file_path}")
 
-def update_mesh(mjcf_path: str | Path, max_vertices: int = 5000) -> None:
+def update_mesh(mjcf_path: str | Path, max_vertices: int = 1000000) -> None:
     """Update the mesh of the MJCF file.
 
     Args:
@@ -234,7 +234,7 @@ def update_mesh(mjcf_path: str | Path, max_vertices: int = 5000) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Updates the mesh of the MJCF file.")
     parser.add_argument("mjcf_path", type=Path, help="Path to the MJCF file.")
-    parser.add_argument("--max-vertices", type=int, default=5000, help="Maximum number of vertices in the mesh.")
+    parser.add_argument("--max-vertices", type=int, default=200000, help="Maximum number of vertices in the mesh.")
     args = parser.parse_args()
     update_mesh(args.mjcf_path, args.max_vertices)
 
