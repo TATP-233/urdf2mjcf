@@ -737,7 +737,7 @@ def convert_urdf_to_mjcf(
     if not collision_only:
         print(f"Split OBJ files by materials...")
         split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
-    
+
     # After post-processing, we need to copy any newly generated mesh files
     # Re-parse the MJCF file to get the updated mesh assets
     logger.info("Copying any newly generated mesh files after post-processing...")
@@ -819,9 +819,10 @@ def convert_urdf_to_mjcf(
                 logger.warning(f"Could not find source file for mesh: {mesh_file}")
         
         logger.info(f"Copied {len(copied_files)} mesh files after post-processing")
-    
+
     print(f"Checking shell meshes...")
-    check_shell_meshes(mjcf_path)
+    if not collision_only:
+        check_shell_meshes(mjcf_path)
     update_mesh(mjcf_path, max_vertices)
 
     # Apply post-processing steps
