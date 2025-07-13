@@ -31,6 +31,7 @@ dependencies = [
     "scipy",
     "coacd",
     "trimesh>=4.6.0",
+    "pycollada",
     "fast-simplification",
     "pillow",
     "pymeshlab"
