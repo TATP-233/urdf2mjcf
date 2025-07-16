@@ -11,12 +11,14 @@ logger = logging.getLogger(__name__)
 
 # MTL fields relevant to MuJoCo
 MTL_FIELDS = (
-    "Ka",   # Ambient color
-    "Kd",   # Diffuse color
-    "Ks",   # Specular color
-    "d",    # Transparency (alpha)
-    "Tr",   # 1 - transparency
-    "Ns",   # Shininess
+    "Ns",   # Shininess / 镜面反射指数
+    "Ka",   # Ambient color / 基础光颜色
+    "Kd",   # Diffuse color / 漫反射颜色
+    "Ks",   # Specular color / 镜面反射颜色
+    "Ke",   # Emissive color / 自发光颜色
+    "Ni",   # Optical density / 折射率
+    "d",    # Transparency (alpha) / 透明度
+    "Tr",   # 1 - transparency / 1 - 透明度
     "map_Kd",  # Diffuse texture map
 )
 
@@ -26,12 +28,14 @@ class Material:
     """A convenience class for constructing MuJoCo materials from MTL files."""
     
     name: str
+    Ns: Optional[str] = None
     Ka: Optional[str] = None
     Kd: Optional[str] = None
     Ks: Optional[str] = None
+    Ke: Optional[str] = None
+    Ni: Optional[str] = None
     d: Optional[str] = None
     Tr: Optional[str] = None
-    Ns: Optional[str] = None
     map_Kd: Optional[str] = None
 
     @staticmethod
@@ -61,8 +65,9 @@ class Material:
     def mjcf_shininess(self) -> str:
         """Convert shininess value to MJCF format."""
         if self.Ns is not None:
+            f_ns = float(self.Ns) 
             # Normalize Ns value to [0, 1]. Ns values normally range from 0 to 1000.
-            Ns = float(self.Ns) / 1_000
+            Ns = f_ns / 1_000 if f_ns > 1. else f_ns
         else:
             Ns = 0.5
         return f"{Ns}"

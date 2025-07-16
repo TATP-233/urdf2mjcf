@@ -77,7 +77,7 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
                 maintain_order=False,
             )
             mesh.export(obj_file.as_posix(), mtl_name=mtl_file.name)
-            os.remove(mtl_file)
+            # os.remove(mtl_file)
             return materials
 
         # Process each material
@@ -118,9 +118,9 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
                     geom.visual.material.name = material_name
                     geom.export(submesh_name.as_posix(), include_texture=True, header=None)
                     logger.info(f"Saved submesh: {submesh_name.name} (material: {material_name})")
-                os.remove(obj_target_dir / "material.mtl")
-            os.remove(mtl_file)
-            os.remove(obj_file)
+            #     os.remove(obj_target_dir / "material.mtl")
+            # os.remove(mtl_file)
+            # os.remove(obj_file)
 
         except ImportError:
             logger.warning("trimesh not available, cannot split OBJ by materials")
@@ -199,7 +199,7 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
                         break
                 
                 # Remove original DAE file
-                os.remove(dae_file_path)
+                # os.remove(dae_file_path)
                 logger.info(f"Deleted original DAE file: {dae_file_path}")
                 
             except Exception as e:
@@ -351,12 +351,15 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
     
     # Collect all used mesh names from geoms
     used_meshes = set()
+    collision_meshes = set()
     for body in root.findall(".//body"):
         for geom in body.findall("geom"):
             if geom.get("type") == "mesh":
                 mesh_name = geom.get("mesh")
                 if mesh_name:
                     used_meshes.add(mesh_name)
+                if geom.get("class") == "collision":
+                    collision_meshes.add(mesh_name)
     
     # Remove unused OBJ meshes that were split
     split_original_meshes = set(mesh_splits.keys())
@@ -372,11 +375,15 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
         elif child.tag == "mesh":
             mesh_name = child.get("name", "")
             # Only keep meshes that are used and not the original split meshes
-            if mesh_name in used_meshes and mesh_name not in split_original_meshes:
-                existing_meshes.append(child)
-            else:
-                if mesh_name in split_original_meshes:
+            if mesh_name in used_meshes:
+                if mesh_name not in split_original_meshes:
+                    existing_meshes.append(child)
+                elif mesh_name in collision_meshes:
+                    existing_meshes.append(child)
+                else:
                     logger.info(f"Removing unused original OBJ mesh: {mesh_name}")
+            else:
+                logger.info(f"Removing unused mesh: {mesh_name}")
         else:
             other_elements.append(child)
         asset.remove(child)

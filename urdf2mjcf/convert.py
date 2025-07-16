@@ -737,92 +737,9 @@ def convert_urdf_to_mjcf(
     if not collision_only:
         print(f"Split OBJ files by materials...")
         split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
-
-    # After post-processing, we need to copy any newly generated mesh files
-    # Re-parse the MJCF file to get the updated mesh assets
-    logger.info("Copying any newly generated mesh files after post-processing...")
-    updated_tree = ET.parse(mjcf_path)
-    updated_root = updated_tree.getroot()
-    updated_asset_elem = updated_root.find("asset")
-    
-    if updated_asset_elem is not None:
-        copied_files = set()  # Track copied files to avoid duplicates
-        
-        for mesh_elem in updated_asset_elem.findall("mesh"):
-            mesh_name = mesh_elem.get("name", "")
-            mesh_file = mesh_elem.get("file", "")
-            
-            if not mesh_file:
-                continue
-            
-            target_path = target_mesh_dir / mesh_file
-            
-            # Skip if already copied or target already exists
-            if str(target_path) in copied_files or target_path.exists():
-                continue
-            
-            # Try to find the source file
-            source_path = None
-            
-            if mesh_file.startswith('package://'):
-                # Handle package:// paths
-                package_path = mesh_file[len('package://'):]
-                pkg_name = package_path.split('/')[0]
-                sub_path = '/'.join(package_path.split('/')[1:])
-                try:
-                    pkg_root = resolve_package_path(pkg_name, workspace_search_paths)
-                    if pkg_root:
-                        source_path = pkg_root / sub_path
-                except:
-                    source_path = None
-            else:
-                # For regular paths, try different locations in order
-                if Path(mesh_file).is_absolute():
-                    source_path = Path(mesh_file)
-                else:
-                    # Try multiple potential source locations
-                    potential_sources = [
-                        urdf_dir / mesh_file,  # Relative to URDF directory
-                        mjcf_path.parent / mesh_file,  # Relative to MJCF directory (might already be copied)
-                    ]
-                    
-                    # Also try looking in subdirectories based on the mesh structure
-                    # For files like "meshes/visual/right_arm/right_arm_link3/obj/right_arm_link3.obj"
-                    # we might need to look in the original URDF structure
-                    mesh_path = Path(mesh_file)
-                    if len(mesh_path.parts) > 1:
-                        # Try the original mesh structure relative to URDF
-                        potential_sources.append(urdf_dir / mesh_file)
-                        # Also try without the first directory component (in case "meshes" is redundant)
-                        if mesh_path.parts[0] == "meshes" and len(mesh_path.parts) > 1:
-                            relative_path = Path(*mesh_path.parts[1:])
-                            potential_sources.append(urdf_dir / relative_path)
-                    
-                    for potential_source in potential_sources:
-                        if potential_source.exists():
-                            source_path = potential_source
-                            break
-            
-            # Copy the file if source exists
-            if source_path and source_path.exists():
-                try:
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    if source_path.suffix.lower() == '.obj':
-                        copy_obj_with_mtl(source_path, target_path)
-                    else:
-                        shutil.copy2(source_path, target_path)
-                    copied_files.add(str(target_path))
-                    logger.debug(f"Copied mesh file: {source_path} -> {target_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to copy mesh file {source_path} to {target_path}: {e}")
-            else:
-                logger.warning(f"Could not find source file for mesh: {mesh_file}")
-        
-        logger.info(f"Copied {len(copied_files)} mesh files after post-processing")
-
-    print(f"Checking shell meshes...")
-    if not collision_only:
+        print(f"Checking shell meshes...")
         check_shell_meshes(mjcf_path)
+
     update_mesh(mjcf_path, max_vertices)
 
     # Apply post-processing steps
@@ -862,7 +779,7 @@ def main() -> None:
         help="The path to the URDF file.",
     )
     parser.add_argument(
-        "--output",
+        "-o", "--output",
         type=str,
         help="The path to the output MJCF file.",
     )
@@ -877,24 +794,27 @@ def main() -> None:
         help="If true, do not run convex decomposition on the mesh."
     )
     parser.add_argument(
-        "--metadata",
+        "-m", "--metadata",
         type=str,
         default=None,
         help="A JSON file containing conversion metadata (joint params and sensors).",
     )
     parser.add_argument(
+        "-dm",
         "--default-metadata",
         nargs='*',
         default=None,
         help="JSON files containing default metadata. Multiple files will be merged, with later files overriding earlier ones.",
     )
     parser.add_argument(
+        "-am",
         "--actuator-metadata",
         nargs='*',
         default=None,
         help="JSON files containing actuator metadata. Multiple files will be merged, with later files overriding earlier ones.",
     )
     parser.add_argument(
+        "-a",
         "--appendix",
         nargs='*',
         default=None,
