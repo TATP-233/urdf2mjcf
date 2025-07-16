@@ -21,15 +21,15 @@ def dae2obj(dae_path: str | Path, obj_path: str | Path):
         
         # collada.Collada and trimesh.load expect string paths
         dae = collada.Collada(str(dae_path))
-        name2dae_goem = {}
+        id2dae_goem = {}
         for geom in dae.geometries:
-            name2dae_goem[geom.name.replace(".", "_")+"-mesh"] = geom
+            id2dae_goem[geom.id] = geom
 
         mesh_data = trimesh.load(str(dae_path))
         mtl_path = obj_path.with_suffix('.mtl')
         mtl_name = mtl_path.name  # Just the filename for export
         
-        logger.info(f"Loaded DAE file with {len(name2dae_goem)} geometries")
+        logger.info(f"Loaded DAE file with {len(id2dae_goem)} geometries")
         
     except Exception as e:
         logger.error(f"Failed to load DAE file {dae_path}: {e}")
@@ -40,13 +40,13 @@ def dae2obj(dae_path: str | Path, obj_path: str | Path):
         unique_materials = {}
         geom_to_material = {}
         
-        for name, geom in mesh_data.geometry.items():
+        for id, geom in mesh_data.geometry.items():
             # 获取材质对象并提取其名称
-            material_obj = name2dae_goem[name].primitives[0].material
+            material_obj = id2dae_goem[id].primitives[0].material
             material_name = material_obj.id if hasattr(material_obj, 'id') else str(material_obj)
             
             # 记录几何体到材质的映射
-            geom_to_material[name] = material_name
+            geom_to_material[id] = material_name
             
             # 收集唯一材质
             if material_name not in unique_materials:

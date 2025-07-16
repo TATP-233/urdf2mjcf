@@ -1,0 +1,35 @@
+{
+  "upper_limb" : {
+    "joint": {
+      "damping": 20
+    },
+    "actuator": {
+      "actuator_type": "position",
+      "kp": 500,
+      "kv": 5,
+      "forcerange": [-150, 150]
+    }
+  },
+  "lower_limb" : {
+    "joint": {
+      "damping": 10
+    },
+    "actuator": {
+      "actuator_type": "position",
+      "kp": 350,
+      "kv": 2,
+      "forcerange": [-100, 100]
+    }
+  },
+  "gripper" : {
+    "joint": {
+      "damping": 1
+    },
+    "actuator": {
+      "actuator_type": "position",
+      "kp": 300,
+      "kv": 2,
+      "forcerange": [-100, 100]
+    }
+  }
+}

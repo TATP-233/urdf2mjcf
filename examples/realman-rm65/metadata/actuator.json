@@ -1,0 +1,32 @@
+{
+  "joint1": {
+    "joint_class": "upper_limb",
+    "actuator_type": "position",
+    "ctrlrange": [-3.1, 3.1]
+  },
+  "joint2": {
+    "joint_class": "upper_limb",
+    "actuator_type": "position",
+    "ctrlrange": [-2.268, 2.268]
+  },
+  "joint3": {
+    "joint_class": "upper_limb",
+    "actuator_type": "position",
+    "ctrlrange": [-2.355, 2.355]
+  },
+  "joint4": {
+    "joint_class": "lower_limb",
+    "actuator_type": "position",
+    "ctrlrange": [-3.1, 3.1]
+  },
+  "joint5": {
+    "joint_class": "lower_limb",
+    "actuator_type": "position",
+    "ctrlrange": [-2.233, 2.233]
+  },
+  "joint6": {
+    "joint_class": "lower_limb",
+    "actuator_type": "position",
+    "ctrlrange": [-6.28, 6.28]
+  }
+}

@@ -32,15 +32,10 @@ def add_floor_default(root: ET.Element, floor_name: str = "floor") -> None:
 
         # Add geom properties for floor
         geom_attrib = {
-            "contype": "1",  # Enable collision
-            "conaffinity": "1",  # Enable collision with all objects
-            "group": "0",  # Default value for group
             "type": "plane",
             "size": "0 0 0.05",
             "material": "groundplane",
-            "rgba": "1 1 1 0.3",  # Make transparent
         }
-
         ET.SubElement(floor_default, "geom", attrib=geom_attrib)
 
 
@@ -111,6 +106,22 @@ def add_floor_assets(root: ET.Element) -> None:
             "reflectance": "0.2",
         },
     )
+
+    _ = ET.SubElement(
+        asset,
+        "texture",
+        attrib={
+            "type": "skybox",
+            "builtin": "gradient",
+            "rgb1": "0.3 0.5 0.7",
+            "rgb2": "0 0 0",
+            "width": "512",
+            "height": "3072",
+        },
+    )
+
+    visual = ET.SubElement(root, "visual")
+    _ = ET.SubElement(visual, "rgba", attrib={"haze": "0.15 0.25 0.35 1"})
 
 
 def add_floor(mjcf_path: str | Path, floor_name: str = "floor") -> None:
