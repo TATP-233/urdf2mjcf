@@ -28,5 +28,10 @@
     "joint_class": "lower_limb",
     "actuator_type": "position",
     "ctrlrange": [-6.28, 6.28]
+  },
+  "gripper_joint1": {
+    "joint_class": "gripper",
+    "actuator_type": "position",
+    "ctrlrange": [0.0, 0.82]
   }
 }
