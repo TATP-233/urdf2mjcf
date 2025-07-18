@@ -23,13 +23,14 @@
   },
   "gripper" : {
     "joint": {
-      "damping": 1
+      "damping": 0.5,
+      "armature": 0.005
     },
     "actuator": {
       "actuator_type": "position",
-      "kp": 300,
-      "kv": 2,
-      "forcerange": [-100, 100]
+      "kp": 100,
+      "kv": 0.5,
+      "forcerange": [-5, 5]
     }
   }
 }
