@@ -197,6 +197,20 @@ def convert_urdf_to_mjcf(
     # These dictionaries are used to collect mesh assets and actuator joints.
     mesh_assets: dict[str, str] = {}
     actuator_joints: list[ParsedJointParams] = []
+    mimic_constraints: list[tuple[str, str, float, float]] = []  # (mimicked_joint, mimicking_joint, multiplier, offset)
+    
+    # Parse mimic joints from URDF
+    for joint in robot.findall("joint"):
+        mimic_elem = joint.find("mimic")
+        if mimic_elem is not None:
+            joint_name = joint.attrib.get("name")
+            mimicked_joint = mimic_elem.attrib.get("joint")
+            multiplier = float(mimic_elem.attrib.get("multiplier", "1.0"))
+            offset = float(mimic_elem.attrib.get("offset", "0.0"))
+            
+            if joint_name and mimicked_joint:
+                mimic_constraints.append((mimicked_joint, joint_name, multiplier, offset))
+                logger.info(f"Found mimic constraint: {joint_name} mimics {mimicked_joint} with multiplier={multiplier}, offset={offset}")
     
     # Prepare paths for mesh processing
     urdf_dir: Path = urdf_path.parent.resolve()
@@ -218,7 +232,7 @@ def convert_urdf_to_mjcf(
     if package_root and package_root not in workspace_search_paths:
         workspace_search_paths.append(package_root)
         logger.debug(f"Found package root from URDF location: {package_root}")
-    
+
     def handle_geom_element(geom_elem: ET.Element | None, default_size: str) -> GeomElement:
         """Helper to handle geometry elements safely.
 
@@ -645,6 +659,28 @@ def convert_urdf_to_mjcf(
         actuator_elem.remove(child)
     for child in actuator_children:
         actuator_elem.append(child)
+
+    # Add equality constraints for mimic joints
+    if mimic_constraints:
+        equality_elem = ET.SubElement(mjcf_root, "equality")
+        for mimicked_joint, mimicking_joint, multiplier, offset in mimic_constraints:
+            joint_attrib = {
+                "joint1": mimicked_joint,
+                "joint2": mimicking_joint
+            }
+            
+            # Generate polycoef attribute for MuJoCo equality constraint
+            # MuJoCo polycoef format: "offset multiplier 0 0 0" for linear relationship
+            # This creates the constraint: joint2 = offset + multiplier * joint1
+            polycoef = f"{offset} {multiplier} 0 0 0"
+            joint_attrib["polycoef"] = polycoef
+            
+            # Use collision class defaults for solver parameters if available
+            joint_attrib["solimp"] = "0.95 0.99 0.001"
+            joint_attrib["solref"] = "0.005 1"
+            
+            ET.SubElement(equality_elem, "joint", attrib=joint_attrib)
+            logger.info(f"Added equality constraint: {mimicking_joint} = {offset} + {multiplier} * {mimicked_joint}")
 
     # Add mesh assets to the asset section before saving
     asset_elem: ET.Element | None = mjcf_root.find("asset")

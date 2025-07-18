@@ -250,5 +250,6 @@
     <child link="link8"/>
     <axis xyz="0 0 -1"/>
     <limit lower="0" upper="0.04" effort="10" velocity="1"/>
+    <mimic joint="joint7" multiplier="1" offset="0"/>
   </joint>
 </robot>

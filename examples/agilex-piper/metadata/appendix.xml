@@ -1,7 +1,3 @@
-  <equality>
-    <joint joint1="joint7" joint2="joint8" solimp="0.95 0.99 0.001" solref="0.005 1"/>
-  </equality>
-
   <sensor>
     <jointpos name="joint1_pos" joint="joint1"/>
     <jointpos name="joint2_pos" joint="joint2"/>
