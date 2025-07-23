@@ -90,33 +90,33 @@ def collision_to_stl(mjcf_path: str | Path) -> None:
         if geom.attrib.get("type") == "mesh":
             mesh_name = geom.attrib.get("mesh")
             class_name = geom.attrib.get("class")
-            if class_name == "collision" and Path(mesh_name).suffix.lower() != ".stl":
-                logger.info(f"Converting collision mesh {mesh_name} to STL format.")
+            if class_name == "collision":
                 for mesh in asset.findall("mesh"):
                     if mesh.attrib.get("name") == mesh_name:
                         mesh_file = mesh_dir_path / mesh.attrib["file"]
                         if not mesh_file.exists():
                             logger.error(f"Mesh file {mesh_file} does not exist.")
                             raise FileNotFoundError(f"Mesh file {mesh_file} does not exist.")
-                        
-                        # 转换为STL格式
-                        stl_file = mesh_file.with_suffix('.stl')
-                        if not stl_file.exists():
-                            try:
-                                import pymeshlab
-                                ms = pymeshlab.MeshSet()
-                                ms.load_new_mesh(str(mesh_file))
-                                ms.save_current_mesh(str(stl_file))
-                                logger.info(f"Converted {mesh_file} to {stl_file}")
-                            except Exception as e:
-                                logger.error(f"Error converting {mesh_file} to STL: {e}")
-                        # 更新geom的mesh属性
-                        geom.attrib["mesh"] = Path(mesh_name).with_suffix('.stl').name
-                        logger.info(f"Updated geom {geom.attrib.get('name')} to use mesh {stl_file.name}")
-                        # 更新mesh的file属性
-                        mesh.attrib["name"] = Path(mesh_name).with_suffix('.stl').name
-                        mesh.attrib["file"] = str(stl_file.relative_to(mesh_dir_path))
-                        logger.info(f"Updated mesh {mesh.attrib.get('name')} to file {mesh.attrib.get('file')}")
+                        if Path(mesh_file).suffix.lower() != ".stl":
+                            logger.warning(f"Converting collision mesh {mesh_name} to STL format.")
+                            # 转换为STL格式
+                            stl_file = mesh_file.with_suffix('.stl')
+                            if not stl_file.exists():
+                                try:
+                                    import pymeshlab
+                                    ms = pymeshlab.MeshSet()
+                                    ms.load_new_mesh(str(mesh_file))
+                                    ms.save_current_mesh(str(stl_file))
+                                    logger.warning(f"Converted {mesh_file} to {stl_file}")
+                                except Exception as e:
+                                    logger.error(f"Error converting {mesh_file} to STL: {e}")
+                            # 更新geom的mesh属性
+                            geom.attrib["mesh"] = Path(mesh_name).with_suffix('.stl').name
+                            logger.warning(f"Updated geom {geom.attrib.get('name')} to use mesh {stl_file.name}")
+                            # 更新mesh的file属性
+                            mesh.attrib["name"] = Path(mesh_name).with_suffix('.stl').name
+                            mesh.attrib["file"] = str(stl_file.relative_to(mesh_dir_path))
+                            logger.warning(f"Updated mesh {mesh.attrib.get('name')} to file {mesh.attrib.get('file')}")
                         break
     
     save_xml(mjcf_path, tree)
