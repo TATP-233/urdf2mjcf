@@ -1,5 +1,6 @@
 """Converts URDF files to MJCF files."""
 
+import os
 import json
 import shutil
 import logging
@@ -41,7 +42,7 @@ from urdf2mjcf.mjcf_builders import (
     add_assets,
     ROBOT_CLASS
 )
-from urdf2mjcf.package_resolver import resolve_package_path, resolve_package_resource, find_workspace_from_path
+from urdf2mjcf.package_resolver import resolve_package_path, find_workspace_from_path
 from urdf2mjcf.materials import Material, parse_mtl_name, get_obj_material_info, copy_obj_with_mtl
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ def convert_urdf_to_mjcf(
     default_metadata: DefaultJointMetadata | None = None,
     actuator_metadata: dict[str, ActuatorMetadata] | None = None,
     appendix_files: list[Path] | None = None,
-    max_vertices: int = 5000,
+    max_vertices: int = 1000000,
     collision_only: bool = False,
     convex_decompose: bool = True
 ) -> None:
@@ -196,6 +197,20 @@ def convert_urdf_to_mjcf(
     # These dictionaries are used to collect mesh assets and actuator joints.
     mesh_assets: dict[str, str] = {}
     actuator_joints: list[ParsedJointParams] = []
+    mimic_constraints: list[tuple[str, str, float, float]] = []  # (mimicked_joint, mimicking_joint, multiplier, offset)
+    
+    # Parse mimic joints from URDF
+    for joint in robot.findall("joint"):
+        mimic_elem = joint.find("mimic")
+        if mimic_elem is not None:
+            joint_name = joint.attrib.get("name")
+            mimicked_joint = mimic_elem.attrib.get("joint")
+            multiplier = float(mimic_elem.attrib.get("multiplier", "1.0"))
+            offset = float(mimic_elem.attrib.get("offset", "0.0"))
+            
+            if joint_name and mimicked_joint:
+                mimic_constraints.append((mimicked_joint, joint_name, multiplier, offset))
+                logger.info(f"Found mimic constraint: {joint_name} mimics {mimicked_joint} with multiplier={multiplier}, offset={offset}")
     
     # Prepare paths for mesh processing
     urdf_dir: Path = urdf_path.parent.resolve()
@@ -217,7 +232,7 @@ def convert_urdf_to_mjcf(
     if package_root and package_root not in workspace_search_paths:
         workspace_search_paths.append(package_root)
         logger.debug(f"Found package root from URDF location: {package_root}")
-    
+
     def handle_geom_element(geom_elem: ET.Element | None, default_size: str) -> GeomElement:
         """Helper to handle geometry elements safely.
 
@@ -645,6 +660,28 @@ def convert_urdf_to_mjcf(
     for child in actuator_children:
         actuator_elem.append(child)
 
+    # Add equality constraints for mimic joints
+    if mimic_constraints:
+        equality_elem = ET.SubElement(mjcf_root, "equality")
+        for mimicked_joint, mimicking_joint, multiplier, offset in mimic_constraints:
+            joint_attrib = {
+                "joint1": mimicked_joint,
+                "joint2": mimicking_joint
+            }
+            
+            # Generate polycoef attribute for MuJoCo equality constraint
+            # MuJoCo polycoef format: "offset multiplier 0 0 0" for linear relationship
+            # This creates the constraint: joint2 = offset + multiplier * joint1
+            polycoef = f"{offset} {multiplier} 0 0 0"
+            joint_attrib["polycoef"] = polycoef
+            
+            # Use collision class defaults for solver parameters if available
+            joint_attrib["solimp"] = "0.95 0.99 0.001"
+            joint_attrib["solref"] = "0.005 1"
+            
+            ET.SubElement(equality_elem, "joint", attrib=joint_attrib)
+            logger.info(f"Added equality constraint: {mimicking_joint} = {offset} + {multiplier} * {mimicked_joint}")
+
     # Add mesh assets to the asset section before saving
     asset_elem: ET.Element | None = mjcf_root.find("asset")
     if asset_elem is None:
@@ -659,6 +696,9 @@ def convert_urdf_to_mjcf(
                 # Remove the package name part, keep the rest as relative path
                 relative_path = '/'.join(parts[1:])
                 filename = relative_path
+        elif filename.startswith('/'):
+            filename = os.path.relpath(filename, urdf_dir)
+
         # mesh_name already should be the stem (without .obj), 
         # so it will match the geom references
         ET.SubElement(asset_elem, "mesh", attrib={"name": mesh_name, "file": filename})
@@ -672,11 +712,6 @@ def convert_urdf_to_mjcf(
     processed_files = set()
     
     for mesh_name, filename in mesh_assets.items():
-        # Skip files that have been processed and are already in the correct subdirectory structure
-        if not filename.startswith('package://') and ('/' in filename):
-            # This file has been processed and placed in subdirectory structure, skip copying to root
-            continue
-            
         # Determine source path based on whether it's a package:// URL or regular path
         source_path: Path | None = None
         target_path: Path | None = None
@@ -695,23 +730,18 @@ def convert_urdf_to_mjcf(
                     source_path = None
             except:
                 source_path = None
-            target_path = target_mesh_dir / sub_path
+        elif filename.startswith('/'):
+            sub_path = os.path.relpath(filename, urdf_dir)
+            source_path = Path(filename)
         else:
-            # For non-package paths, try to resolve relative to URDF directory
-            if filename.startswith('/'):
-                # Absolute path
-                source_path = Path(filename)
-            else:
-                # Relative path - relative to URDF file directory
-                source_path = (urdf_dir / filename).resolve()
-            
-            # If the path doesn't exist, log a warning but continue
-            if source_path and not source_path.exists():
-                logger.warning(f"Mesh file not found: {source_path} (from URDF path: {filename})")
-                continue
-                
-            target_path = target_mesh_dir / Path(filename).name
-        
+            sub_path = filename
+            source_path = (urdf_dir / filename).resolve()
+
+        if source_path and not source_path.exists():
+            logger.error(f"Mesh file not found: {source_path} (from URDF path: {filename})")
+            raise FileNotFoundError(f"Mesh file not found: {source_path} (from URDF path: {filename})")
+
+        target_path = target_mesh_dir / sub_path
         # Copy the file if source exists and target is valid
         if source_path and target_path and source_path.exists():
             if not target_path.parent.exists():
@@ -743,91 +773,9 @@ def convert_urdf_to_mjcf(
     if not collision_only:
         print(f"Split OBJ files by materials...")
         split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
-    
-    # After post-processing, we need to copy any newly generated mesh files
-    # Re-parse the MJCF file to get the updated mesh assets
-    logger.info("Copying any newly generated mesh files after post-processing...")
-    updated_tree = ET.parse(mjcf_path)
-    updated_root = updated_tree.getroot()
-    updated_asset_elem = updated_root.find("asset")
-    
-    if updated_asset_elem is not None:
-        copied_files = set()  # Track copied files to avoid duplicates
-        
-        for mesh_elem in updated_asset_elem.findall("mesh"):
-            mesh_name = mesh_elem.get("name", "")
-            mesh_file = mesh_elem.get("file", "")
-            
-            if not mesh_file:
-                continue
-            
-            target_path = target_mesh_dir / mesh_file
-            
-            # Skip if already copied or target already exists
-            if str(target_path) in copied_files or target_path.exists():
-                continue
-            
-            # Try to find the source file
-            source_path = None
-            
-            if mesh_file.startswith('package://'):
-                # Handle package:// paths
-                package_path = mesh_file[len('package://'):]
-                pkg_name = package_path.split('/')[0]
-                sub_path = '/'.join(package_path.split('/')[1:])
-                try:
-                    pkg_root = resolve_package_path(pkg_name, workspace_search_paths)
-                    if pkg_root:
-                        source_path = pkg_root / sub_path
-                except:
-                    source_path = None
-            else:
-                # For regular paths, try different locations in order
-                if Path(mesh_file).is_absolute():
-                    source_path = Path(mesh_file)
-                else:
-                    # Try multiple potential source locations
-                    potential_sources = [
-                        urdf_dir / mesh_file,  # Relative to URDF directory
-                        mjcf_path.parent / mesh_file,  # Relative to MJCF directory (might already be copied)
-                    ]
-                    
-                    # Also try looking in subdirectories based on the mesh structure
-                    # For files like "meshes/visual/right_arm/right_arm_link3/obj/right_arm_link3.obj"
-                    # we might need to look in the original URDF structure
-                    mesh_path = Path(mesh_file)
-                    if len(mesh_path.parts) > 1:
-                        # Try the original mesh structure relative to URDF
-                        potential_sources.append(urdf_dir / mesh_file)
-                        # Also try without the first directory component (in case "meshes" is redundant)
-                        if mesh_path.parts[0] == "meshes" and len(mesh_path.parts) > 1:
-                            relative_path = Path(*mesh_path.parts[1:])
-                            potential_sources.append(urdf_dir / relative_path)
-                    
-                    for potential_source in potential_sources:
-                        if potential_source.exists():
-                            source_path = potential_source
-                            break
-            
-            # Copy the file if source exists
-            if source_path and source_path.exists():
-                try:
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    if source_path.suffix.lower() == '.obj':
-                        copy_obj_with_mtl(source_path, target_path)
-                    else:
-                        shutil.copy2(source_path, target_path)
-                    copied_files.add(str(target_path))
-                    logger.debug(f"Copied mesh file: {source_path} -> {target_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to copy mesh file {source_path} to {target_path}: {e}")
-            else:
-                logger.warning(f"Could not find source file for mesh: {mesh_file}")
-        
-        logger.info(f"Copied {len(copied_files)} mesh files after post-processing")
-    
-    print(f"Checking shell meshes...")
-    check_shell_meshes(mjcf_path)
+        print(f"Checking shell meshes...")
+        check_shell_meshes(mjcf_path)
+
     update_mesh(mjcf_path, max_vertices)
 
     # Apply post-processing steps
@@ -867,14 +815,14 @@ def main() -> None:
         help="The path to the URDF file.",
     )
     parser.add_argument(
-        "--output",
+        "-o", "--output",
         type=str,
         help="The path to the output MJCF file.",
     )
     parser.add_argument(
         "--collision-only",
         action="store_true", 
-        help="If true, use simplified collision geometry without visual appearance for visual representation."
+        help="If true, use collision geometry without visual appearance for visual representation."
     )
     parser.add_argument(
         "--no-convex-decompose",
@@ -882,24 +830,27 @@ def main() -> None:
         help="If true, do not run convex decomposition on the mesh."
     )
     parser.add_argument(
-        "--metadata",
+        "-m", "--metadata",
         type=str,
         default=None,
         help="A JSON file containing conversion metadata (joint params and sensors).",
     )
     parser.add_argument(
+        "-dm",
         "--default-metadata",
         nargs='*',
         default=None,
         help="JSON files containing default metadata. Multiple files will be merged, with later files overriding earlier ones.",
     )
     parser.add_argument(
+        "-am",
         "--actuator-metadata",
         nargs='*',
         default=None,
         help="JSON files containing actuator metadata. Multiple files will be merged, with later files overriding earlier ones.",
     )
     parser.add_argument(
+        "-a",
         "--appendix",
         nargs='*',
         default=None,
@@ -914,7 +865,7 @@ def main() -> None:
     parser.add_argument(
         "--max-vertices",
         type=int,
-        default=5000,
+        default=1000000,
         help="Maximum number of vertices in the mesh.",
     )
     args = parser.parse_args()

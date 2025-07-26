@@ -30,7 +30,8 @@ dependencies = [
     "pydantic",
     "scipy",
     "coacd",
-    "trimesh",
+    "trimesh>=4.6.0",
+    "pycollada",
     "fast-simplification",
     "pillow",
     "pymeshlab"

@@ -25,34 +25,12 @@ def add_default_lights(root: ET.Element) -> None:
         logger.warning("No worldbody element found in the MJCF file.")
         return
 
-    # Check if lights already exist and remove them to update
-    existing_spotlight = worldbody.find(".//light[@name='spotlight']")
-    existing_top = worldbody.find(".//light[@name='top']")
-    
-    if existing_spotlight is not None:
-        worldbody.remove(existing_spotlight)
-        logger.info("Removed existing spotlight to update.")
-    
-    if existing_top is not None:
-        worldbody.remove(existing_top)
-        logger.info("Removed existing top light to update.")
-
-    # Add spotlight
-    spotlight = ET.Element("light")
-    spotlight.attrib["name"] = "spotlight"
-    spotlight.attrib["diffuse"] = ".8 .8 .8"
-    spotlight.attrib["specular"] = "0.3 0.3 0.3"
-    spotlight.attrib["pos"] = "0 -6 4"
-    spotlight.attrib["cutoff"] = "30"
-    worldbody.append(spotlight)
-    logger.info("Added spotlight to the MJCF file.")
-
-    # Add top light
-    top_light = ET.Element("light")
-    top_light.attrib["name"] = "top"
-    top_light.attrib["pos"] = "0 0 2"
-    worldbody.append(top_light)
-    logger.info("Added top light to the MJCF file.")
+    # <light pos="0 0 2." dir="0 0 -1" directional="true"/>
+    _ = ET.SubElement(
+        worldbody,
+        "light",
+        attrib={"pos": "0 0 2.", "dir": "0 0 -1", "directional": "true"},
+    )
 
 def add_light(mjcf_path: str | Path) -> None:
     """Add default lights to the MJCF file.

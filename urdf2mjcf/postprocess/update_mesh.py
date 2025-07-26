@@ -13,7 +13,7 @@ from urdf2mjcf.utils import save_xml
 
 logger = logging.getLogger(__name__)
 
-def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: int = 5000) -> None:
+def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: int) -> None:
     """Update the mesh assets of the MJCF file.
 
     Args:
@@ -38,9 +38,12 @@ def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: in
             continue
         
         # 检查文件扩展名
-        if not mesh_file.suffix.lower() in ['.obj', '.stl', '.ply', '.off']:
+        if not mesh_file.suffix.lower() in ['.obj', '.stl']:
             logger.warning(f"Unsupported mesh format: {mesh_file.suffix}")
             continue
+        
+        if mesh.attrib["file"].startswith('./'):
+            mesh.attrib["file"] = str(mesh_file.relative_to(dir_path))
 
         try:
             # 使用PyMeshLab加载网格获取顶点数
@@ -67,6 +70,56 @@ def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: in
         except Exception as e:
             logger.error(f"处理网格文件 {mesh_file} 时出错: {e}")
             continue
+
+    save_xml(mjcf_path, root)
+
+def collision_to_stl(mjcf_path: str | Path) -> None:
+    """Convert collision meshes to STL format in the MJCF file.
+
+    Args:
+        mjcf_path: The path to the MJCF file to process.
+    """
+    tree = ET.parse(mjcf_path)
+    root = tree.getroot()
+
+    compiler = root.find("compiler")
+    mesh_dir_path = mjcf_path.parent / compiler.attrib["meshdir"]
+    asset = root.find("asset")
+    
+    for geom in root.iter("geom"):
+        if geom.attrib.get("type") == "mesh":
+            mesh_name = geom.attrib.get("mesh")
+            class_name = geom.attrib.get("class")
+            if class_name == "collision":
+                for mesh in asset.findall("mesh"):
+                    if mesh.attrib.get("name") == mesh_name:
+                        mesh_file = mesh_dir_path / mesh.attrib["file"]
+                        if not mesh_file.exists():
+                            logger.error(f"Mesh file {mesh_file} does not exist.")
+                            raise FileNotFoundError(f"Mesh file {mesh_file} does not exist.")
+                        if Path(mesh_file).suffix.lower() != ".stl":
+                            logger.warning(f"Converting collision mesh {mesh_name} to STL format.")
+                            # 转换为STL格式
+                            stl_file = mesh_file.with_suffix('.stl')
+                            if not stl_file.exists():
+                                try:
+                                    import pymeshlab
+                                    ms = pymeshlab.MeshSet()
+                                    ms.load_new_mesh(str(mesh_file))
+                                    ms.save_current_mesh(str(stl_file))
+                                    logger.warning(f"Converted {mesh_file} to {stl_file}")
+                                except Exception as e:
+                                    logger.error(f"Error converting {mesh_file} to STL: {e}")
+                            # 更新geom的mesh属性
+                            geom.attrib["mesh"] = Path(mesh_name).with_suffix('.stl').name
+                            logger.warning(f"Updated geom {geom.attrib.get('name')} to use mesh {stl_file.name}")
+                            # 更新mesh的file属性
+                            mesh.attrib["name"] = Path(mesh_name).with_suffix('.stl').name
+                            mesh.attrib["file"] = str(stl_file.relative_to(mesh_dir_path))
+                            logger.warning(f"Updated mesh {mesh.attrib.get('name')} to file {mesh.attrib.get('file')}")
+                        break
+    
+    save_xml(mjcf_path, tree)
 
 def remove_unused_mesh(mjcf_path: str | Path) -> None:
     """Remove the unused mesh of the MJCF file.
@@ -175,13 +228,13 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
             if mesh_file:
                 referenced_files.add(mesh_file)
                 # 如果是obj文件，也包含对应的mtl文件
-                if mesh_file.lower().endswith('.obj'):
-                    mtl_file = Path(mesh_file).with_suffix('.mtl').name
-                    referenced_files.add(str(Path(mesh_file).parent / mtl_file))
+                # if mesh_file.lower().endswith('.obj'):
+                #     mtl_file = Path(mesh_file).with_suffix('.mtl').name
+                #     referenced_files.add(str(Path(mesh_file).parent / mtl_file))
         
         # 查找所有mesh文件
-        mesh_extensions = ['.obj', '.stl', '.ply', '.off', '.mtl']
-        for mesh_file_path in mesh_dir_path.iterdir():
+        mesh_extensions = ['.obj', '.stl', '.dae', '.mtl']
+        for mesh_file_path in mesh_dir_path.rglob('*'):
             if mesh_file_path.is_file() and mesh_file_path.suffix.lower() in mesh_extensions:
                 # 计算相对于mesh目录的路径
                 relative_path = mesh_file_path.relative_to(mesh_dir_path)
@@ -190,7 +243,7 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
                 if relative_path_str not in referenced_files:
                     logger.info(f"发现未被引用的文件: {relative_path_str}")
                     mesh_files_to_remove.append(mesh_file_path)
-    
+
     # 删除文件
     deleted_files = []
     for file_path in mesh_files_to_remove:
@@ -218,7 +271,7 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
         for file_path in deleted_files:
             logger.info(f"  - {file_path}")
 
-def update_mesh(mjcf_path: str | Path, max_vertices: int = 5000) -> None:
+def update_mesh(mjcf_path: str | Path, max_vertices: int = 1000000) -> None:
     """Update the mesh of the MJCF file.
 
     Args:
@@ -227,14 +280,13 @@ def update_mesh(mjcf_path: str | Path, max_vertices: int = 5000) -> None:
     tree = ET.parse(mjcf_path)
     root = tree.getroot()
     update_mesh_assets(mjcf_path, root, max_vertices)
-    save_xml(mjcf_path, tree)
-
+    collision_to_stl(mjcf_path)
     remove_unused_mesh(mjcf_path)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Updates the mesh of the MJCF file.")
     parser.add_argument("mjcf_path", type=Path, help="Path to the MJCF file.")
-    parser.add_argument("--max-vertices", type=int, default=5000, help="Maximum number of vertices in the mesh.")
+    parser.add_argument("--max-vertices", type=int, default=200000, help="Maximum number of vertices in the mesh.")
     args = parser.parse_args()
     update_mesh(args.mjcf_path, args.max_vertices)
 

@@ -5,11 +5,12 @@ import logging
 import argparse
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+import traceback
 
 import trimesh
 from urdf2mjcf.materials import Material, parse_mtl_name
 from urdf2mjcf.utils import save_xml
+from urdf2mjcf.postprocess.mesh_converter import dae2obj
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,17 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
         # Skip processing if there's only one material
         if len(sub_mtls) <= 1:
             logger.info(f"OBJ file {obj_file.name} has only one material, skipping split processing")
+            mesh = trimesh.load(
+                obj_file,
+                split_object=True,
+                group_material=True,  # Key parameter: group by material
+                process=False,
+                maintain_order=False,
+            )
+            mesh.export(obj_file.as_posix(), mtl_name=mtl_file.name)
+            # os.remove(mtl_file)
             return materials
-                
+
         # Process each material
         for sub_mtl in sub_mtls:
             if sub_mtl:  # Make sure the material has content
@@ -98,11 +108,8 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
             logger.info(f"Splitting OBJ file {obj_file.name} by materials in: {obj_target_dir}")
             
             if isinstance(mesh, trimesh.base.Trimesh):
-                # Single mesh, just copy it
-                target_mesh = obj_target_dir / f"{obj_stem}.obj"
-                with open(obj_file, 'r') as src, open(target_mesh, 'w') as dst:
-                    dst.write(src.read())
-                logger.info(f"Copied single mesh: {target_mesh.name}")
+                logger.warning(f"OBJ file {obj_file.name} is a single mesh, but has more than one material, skipping split processing, please check the mtl file")
+                mesh.export(obj_file.as_posix())
             else:
                 # Multiple submeshes, save each one separately
                 logger.info(f"Splitting OBJ into {len(mesh.geometry)} submeshes by material")
@@ -111,15 +118,16 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
                     geom.visual.material.name = material_name
                     geom.export(submesh_name.as_posix(), include_texture=True, header=None)
                     logger.info(f"Saved submesh: {submesh_name.name} (material: {material_name})")
-                os.remove(obj_target_dir / "material.mtl")
-            os.remove(mtl_file)
-            os.remove(obj_file)
+            #     os.remove(obj_target_dir / "material.mtl")
+            # os.remove(mtl_file)
+            # os.remove(obj_file)
 
         except ImportError:
             logger.warning("trimesh not available, cannot split OBJ by materials")
         except Exception as e:
             logger.warning(f"Failed to split OBJ file {obj_file} by materials: {e}")
-                        
+            traceback.print_exc()
+
     except Exception as e:
         logger.error(f"Failed to process MTL file {mtl_file}: {e}")
     
@@ -140,9 +148,12 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
     compiler = root.find("compiler")
     if compiler is None:
         compiler = ET.SubElement(root, "compiler")
-    compiler.attrib["meshdir"] = "."
     
-    mesh_dir = mjcf_path.parent / compiler.attrib["meshdir"]
+    # Use existing meshdir setting or default to "."
+    meshdir_ref = compiler.attrib.get("meshdir", ".")
+    mesh_dir = mjcf_path.parent / meshdir_ref
+    
+    logger.info(f"Using meshdir: {meshdir_ref}, mesh_dir: {mesh_dir}")
     
     # Get asset section
     asset = root.find("asset")
@@ -150,13 +161,74 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
         logger.info("No asset section found, skipping OBJ material splitting")
         return
     
-    # Collect all OBJ mesh assets
+    # First, convert DAE files to OBJ files
+    dae_meshes = {}
+    for mesh_elem in asset.findall("mesh"):
+        mesh_name = mesh_elem.get("name", "")
+        mesh_file = mesh_elem.get("file", "")
+        if mesh_file.lower().endswith('.dae'):
+            dae_meshes[mesh_name] = mesh_file
+    
+    if dae_meshes:
+        # Convert DAE files to OBJ files
+        for mesh_name, mesh_file in dae_meshes.items():
+            dae_file_path = mesh_dir / mesh_file
+            if not dae_file_path.exists():
+                logger.warning(f"DAE file {dae_file_path} does not exist, skipping")
+                continue
+            
+            # Generate OBJ file path
+            obj_file_path = dae_file_path.with_suffix('.obj')
+            
+            try:
+                logger.info(f"Converting DAE to OBJ: {dae_file_path} -> {obj_file_path}")
+                dae2obj(dae_file_path, obj_file_path)
+                
+                # Verify the OBJ file was created
+                if not obj_file_path.exists():
+                    logger.error(f"OBJ file was not created: {obj_file_path}")
+                    continue
+                
+                # Update mesh element in asset to reference OBJ file
+                # Calculate relative path from mesh_dir to maintain directory structure
+                obj_relative_path = obj_file_path.relative_to(mesh_dir)
+                for mesh_elem in asset.findall("mesh"):
+                    if mesh_elem.get("name") == mesh_name:
+                        mesh_elem.attrib["file"] = str(obj_relative_path)
+                        logger.info(f"Updated asset reference: {mesh_name} -> {obj_relative_path}")
+                        break
+                
+                # Remove original DAE file
+                # os.remove(dae_file_path)
+                logger.info(f"Deleted original DAE file: {dae_file_path}")
+                
+            except Exception as e:
+                logger.error(f"Failed to convert DAE file {dae_file_path}: {e}")
+                continue
+        # 直接读取mjcf文件，不使用tree，将所有的".dae"替换为".obj"
+        with open(mjcf_path, "r") as f:
+            mjcf_content = f.read()
+        mjcf_content = mjcf_content.replace(".dae", ".obj")
+        with open(mjcf_path, "w") as f:
+            f.write(mjcf_content)
+        # reload the mjcf file
+        tree = ET.parse(mjcf_path)
+        root = tree.getroot()
+        asset = root.find("asset")
+        if asset is None:
+            logger.info("No asset section found, skipping OBJ material splitting")
+            return
+
+    # Collect all OBJ mesh assets (including converted ones)
     obj_meshes = {}
     for mesh_elem in asset.findall("mesh"):
         mesh_name = mesh_elem.get("name", "")
         mesh_file = mesh_elem.get("file", "")
         if mesh_file.lower().endswith('.obj'):
             obj_meshes[mesh_name] = mesh_file
+
+    logger.info(f"Found {len(obj_meshes)} OBJ meshes: {list(obj_meshes.keys())}")
+    logger.info(f"Mesh directory: {mesh_dir}")
     
     if not obj_meshes:
         logger.info("No OBJ meshes found, skipping material splitting")
@@ -168,6 +240,7 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
     
     for mesh_name, mesh_file in obj_meshes.items():
         obj_file_path = mesh_dir / mesh_file
+        logger.info(f"Processing OBJ: {mesh_name} -> {mesh_file} -> {obj_file_path}")
         if not obj_file_path.exists():
             logger.warning(f"OBJ file {obj_file_path} does not exist, skipping")
             continue
@@ -278,12 +351,15 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
     
     # Collect all used mesh names from geoms
     used_meshes = set()
+    collision_meshes = set()
     for body in root.findall(".//body"):
         for geom in body.findall("geom"):
             if geom.get("type") == "mesh":
                 mesh_name = geom.get("mesh")
                 if mesh_name:
                     used_meshes.add(mesh_name)
+                if geom.get("class") == "collision":
+                    collision_meshes.add(mesh_name)
     
     # Remove unused OBJ meshes that were split
     split_original_meshes = set(mesh_splits.keys())
@@ -299,11 +375,15 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
         elif child.tag == "mesh":
             mesh_name = child.get("name", "")
             # Only keep meshes that are used and not the original split meshes
-            if mesh_name in used_meshes and mesh_name not in split_original_meshes:
-                existing_meshes.append(child)
-            else:
-                if mesh_name in split_original_meshes:
+            if mesh_name in used_meshes:
+                if mesh_name not in split_original_meshes:
+                    existing_meshes.append(child)
+                elif mesh_name in collision_meshes:
+                    existing_meshes.append(child)
+                else:
                     logger.info(f"Removing unused original OBJ mesh: {mesh_name}")
+            else:
+                logger.info(f"Removing unused mesh: {mesh_name}")
         else:
             other_elements.append(child)
         asset.remove(child)

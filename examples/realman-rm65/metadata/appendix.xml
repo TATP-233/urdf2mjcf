@@ -1,0 +1,12 @@
+  <sensor>
+    <jointpos name="joint1_pos" joint="joint1"/>
+    <jointpos name="joint2_pos" joint="joint2"/>
+    <jointpos name="joint3_pos" joint="joint3"/>
+    <jointpos name="joint4_pos" joint="joint4"/>
+    <jointpos name="joint5_pos" joint="joint5"/>
+    <jointpos name="joint6_pos" joint="joint6"/>
+  </sensor>
+
+  <keyframe>
+    <key qpos='0.2 0.3 1.4 -0.1 1.12 0 0 0 0 0 0 0' ctrl="0.2 0.3 1.4 -0.1 1.12 0 0"/>
+  </keyframe>
