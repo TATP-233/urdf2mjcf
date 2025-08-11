@@ -370,10 +370,12 @@ def convert_urdf_to_mjcf(
             if origin_inertial is not None:
                 inertial_elem.attrib["pos"] = origin_inertial.attrib.get("xyz", "0 0 0")
                 rpy = origin_inertial.attrib.get("rpy", "0 0 0")
-                inertial_elem.attrib["quat"] = rpy_to_quat(rpy)
+                if rpy != "0 0 0":
+                    inertial_elem.attrib["quat"] = rpy_to_quat(rpy)
             mass_elem = inertial.find("mass")
             if mass_elem is not None:
-                inertial_elem.attrib["mass"] = mass_elem.attrib.get("value", "0")
+                mass = mass_elem.attrib.get("value", "0")
+                inertial_elem.attrib["mass"] = str(max(float(mass), 1e-6))
             inertia_elem = inertial.find("inertia")
             if inertia_elem is not None:
                 ixx = float(inertia_elem.attrib.get("ixx", "0"))
@@ -387,7 +389,7 @@ def convert_urdf_to_mjcf(
                         "Warning: off-diagonal inertia terms for link '%s' are nonzero and will be ignored.",
                         link_name,
                     )
-                inertial_elem.attrib["diaginertia"] = f"{ixx} {iyy} {izz}"
+                inertial_elem.attrib["diaginertia"] = f"{max(ixx, 1e-9)} {max(iyy, 1e-9)} {max(izz, 1e-9)}"
             body.append(inertial_elem)
 
         # Process collision geometries.

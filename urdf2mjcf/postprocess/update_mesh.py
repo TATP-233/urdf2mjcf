@@ -271,6 +271,98 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
         for file_path in deleted_files:
             logger.info(f"  - {file_path}")
 
+def remove_empty_meshes(mjcf_path: str | Path) -> None:
+    """检测并移除顶点数为0的空mesh，同时删除worldbody中的引用。
+
+    - 遍历`asset/mesh`并读取对应文件
+    - 若顶点数为0：
+      1) 记录warning日志
+      2) 从`asset`中删除该`mesh`
+      3) 从`worldbody`（实际为各级`body`下的`geom`）中删除引用该mesh的`geom`
+    """
+    mjcf_path = Path(mjcf_path)
+    tree = ET.parse(mjcf_path)
+    root = tree.getroot()
+
+    compiler = root.find("compiler")
+    if compiler is None:
+        logger.warning("No compiler element found in MJCF file")
+        return
+
+    meshdir = compiler.attrib.get("meshdir", ".")
+    mesh_dir_path = mjcf_path.parent / meshdir
+
+    asset = root.find("asset")
+    if asset is None:
+        logger.warning("No asset element found in MJCF file")
+        return
+
+    import pymeshlab
+
+    # 收集空mesh及其名称
+    empty_mesh_elements: list[ET.Element] = []
+    empty_mesh_names: set[str] = set()
+
+    for mesh in list(asset.findall("mesh")):
+        mesh_name = mesh.attrib.get("name")
+        mesh_file_attr = mesh.attrib.get("file")
+        if not mesh_file_attr:
+            continue
+
+        mesh_file_path = mesh_dir_path / mesh_file_attr
+        if not mesh_file_path.exists():
+            continue
+
+        # 仅处理常见的网格格式
+        if mesh_file_path.suffix.lower() not in [".obj", ".stl"]:
+            continue
+
+        try:
+            ms = pymeshlab.MeshSet()
+            ms.load_new_mesh(str(mesh_file_path))
+            vertices = ms.current_mesh().vertex_matrix()
+            if len(vertices) == 0:
+                # 记录warning并标记删除
+                logger.warning(
+                    f"检测到空mesh: name={mesh_name}, file={mesh_file_attr}. 将从asset和worldbody中删除引用。"
+                )
+                empty_mesh_elements.append(mesh)
+                if mesh_name:
+                    empty_mesh_names.add(mesh_name)
+        except Exception as e:
+            # 读取失败不等同于空mesh，这里只记录错误
+            logger.error(f"读取mesh文件失败 {mesh_file_path}: {e}")
+            continue
+
+    if not empty_mesh_elements and not empty_mesh_names:
+        return
+
+    # 从worldbody（各级body）中删除引用这些mesh的geom
+    # 需要父节点来执行remove
+    if empty_mesh_names:
+        for parent in root.iter():
+            # 遍历直接子元素，避免跨层误删
+            for child in list(parent):
+                if child.tag == "geom":
+                    ref_name = child.attrib.get("mesh")
+                    if ref_name and ref_name in empty_mesh_names:
+                        parent.remove(child)
+                        logger.info(
+                            f"已从{parent.tag}中删除引用空mesh '{ref_name}' 的geom: name={child.attrib.get('name')}"
+                        )
+
+    # 从asset中删除空mesh定义
+    for mesh in empty_mesh_elements:
+        try:
+            mesh_name = mesh.attrib.get("name")
+            asset.remove(mesh)
+            logger.info(f"已从asset中删除空mesh定义: {mesh_name}")
+        except Exception as e:
+            logger.error(f"从asset删除mesh失败: {e}")
+
+    # 保存修改
+    save_xml(mjcf_path, tree)
+
 def update_mesh(mjcf_path: str | Path, max_vertices: int = 1000000) -> None:
     """Update the mesh of the MJCF file.
 
@@ -280,6 +372,7 @@ def update_mesh(mjcf_path: str | Path, max_vertices: int = 1000000) -> None:
     tree = ET.parse(mjcf_path)
     root = tree.getroot()
     update_mesh_assets(mjcf_path, root, max_vertices)
+    remove_empty_meshes(mjcf_path)
     collision_to_stl(mjcf_path)
     remove_unused_mesh(mjcf_path)
 
