@@ -2,10 +2,9 @@
 
 使用流程:
     python -m align_stp.assign_mesh_part \
-        --mesh path/to/mesh.obj \
         --obj path/to/multi_part.obj \
         --mapping path/to/mapping.json \
-        --out-dir output_dir \
+        --outdir output_dir \
         --save-local  # 额外保存到 part 局部坐标系
 
 主要步骤:
@@ -41,7 +40,6 @@ try:
 except Exception as exc:  # pragma: no cover
     print("需要 trimesh 依赖: pip install trimesh", file=sys.stderr)
     raise
-
 
 @dataclass
 class PartInfo:
@@ -175,27 +173,25 @@ def save_mesh(mesh: "trimesh.Trimesh", path: Path):
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="基于 mapping.json 将 mesh 分配到 OBJ 的某个 part 并可转换到局部坐标")
     parser.add_argument("mesh", help="输入独立 mesh (obj/stl 等)")
-    parser.add_argument("--obj", required=True, help="包含多个 part 的多组 OBJ")
+    parser.add_argument("-g", "--groups", required=True, help="包含多个 part 的多组 OBJ")
     parser.add_argument("-m", "--mapping", required=True, help="mapping.json 路径")
     parser.add_argument("-o", "--outdir", required=False, default=None, help="输出目录")
     parser.add_argument("--epsilon", type=float, default=1e-4, help="AABB 包含判断松弛 eps")
     parser.add_argument("--sample", type=int, default=500, help="精细检测采样点上限")
-    parser.add_argument("--save-local", action="store_true", help="保存到 part 局部坐标系的 mesh")
-    parser.add_argument("--suffix-local", default="_local", help="局部坐标输出文件名后缀")
     args = parser.parse_args(argv)
 
     mesh_path = Path(args.mesh)
-    obj_path = Path(args.obj)
+    group_obj_path = Path(args.groups)
     mapping_path = Path(args.mapping)
     if args.outdir is None:
-        out_dir = mesh_path.parent
+        out_dir = mesh_path.parent / "meshes_aligned"
     else:
         out_dir = Path(args.outdir)
 
     if not mesh_path.exists():
         parser.error(f"mesh 不存在: {mesh_path}")
-    if not obj_path.exists():
-        parser.error(f"obj 不存在: {obj_path}")
+    if not group_obj_path.exists():
+        parser.error(f"group obj 不存在: {group_obj_path}")
     if not mapping_path.exists():
         parser.error(f"mapping 不存在: {mapping_path}")
 
@@ -218,7 +214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     print("[4/6] 加载 OBJ 子部分几何 ...")
-    obj_parts = load_obj_parts(obj_path)
+    obj_parts = load_obj_parts(group_obj_path)
     print(f"    OBJ 子几何数量: {len(obj_parts)}")
 
     print("[5/6] 精细非凸检测 ...")
@@ -228,20 +224,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("[6/6] 保存结果 ...")
     out_dir.mkdir(parents=True, exist_ok=True)
     base_name = mesh_path.stem
-    world_out = out_dir / f"{base_name}_as_{best_part.name}{mesh_path.suffix}"
-    save_mesh(input_mesh, world_out)
-
-    local_out = None
-    if args.save_local:
-        local_mesh = transform_to_local(input_mesh, best_part.transform)
-        local_out = out_dir / f"{base_name}_as_{best_part.name}{args.suffix_local}{mesh_path.suffix}"
-        save_mesh(local_mesh, local_out)
+    local_mesh = transform_to_local(input_mesh, best_part.transform)
+    local_out = out_dir / best_part.name / f"{base_name}{mesh_path.suffix}"
+    save_mesh(local_mesh, local_out)
 
     # 输出一个 JSON 描述
     summary = {
         "input_mesh": str(mesh_path),
         "matched_part": best_part.name,
-        "world_output": str(world_out),
         "local_output": str(local_out) if local_out else None,
         "aabb_input": {"min": in_min.tolist(), "max": in_max.tolist()},
     }
