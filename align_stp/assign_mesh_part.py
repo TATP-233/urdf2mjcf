@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import sys
 import json
+import shutil
 import argparse
 from pathlib import Path
 from dataclasses import dataclass
@@ -1103,6 +1104,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"    [WARN] part {part_name} 合并失败 (结果为空)", file=sys.stderr)
             except Exception as exc:
                 print(f"    [WARN] 处理 part {part_name} 合并异常: {exc}", file=sys.stderr)
+
+            # 合并前先删除原 part 文件夹
+            part_dir = out_dir / part_name
+            if part_dir.exists() and part_dir.is_dir():
+                try:
+                    shutil.rmtree(part_dir)
+                    # print(f"    [INFO] 已删除原 part 文件夹: {part_dir}")
+                except Exception as exc:
+                    print(f"    [WARN] 删除 part 文件夹失败: {part_dir} ({exc})", file=sys.stderr)
     else:
         print("[5/8] 跳过合并 (非多子部件或无成功匹配)")
 
@@ -1115,6 +1125,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for sub_name, sub_mesh in submeshes:
                     if sub_name in fail_names:
                         try:
+                            # 设置无贴图材质
+                            mat_name = None
+                            if hasattr(sub_mesh.visual, 'material') and sub_mesh.visual.material is not None:
+                                try:
+                                    mat_name = sub_mesh.visual.material.name
+                                except Exception:
+                                    pass
+                            if mat_name is None:
+                                mat_name = 'material_0'
+                            # 取原 diffuse 或默认
+                            diffuse = None
+                            try:
+                                diffuse = sub_mesh.visual.material.diffuse
+                            except Exception:
+                                pass
+                            sub_mesh.visual.material = SimpleMaterial(name=mat_name, diffuse=diffuse)
                             scene_unmatched.add_geometry(sub_mesh, node_name=sub_name)
                         except Exception:
                             pass

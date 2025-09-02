@@ -13,12 +13,15 @@ from urdf2mjcf.utils import save_xml
 
 logger = logging.getLogger(__name__)
 
-def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: int) -> None:
+def simplify_mesh_assets(mjcf_path: str | Path, max_vertices: int) -> None:
     """Update the mesh assets of the MJCF file.
 
     Args:
         root: The root element of the MJCF file.
     """
+    tree = ET.parse(mjcf_path)
+    root = tree.getroot()
+
     import pymeshlab
     compiler = root.find("compiler")
     if compiler is None:
@@ -34,7 +37,7 @@ def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: in
     for mesh in asset.findall("mesh"):
         mesh_file = dir_path / mesh.attrib["file"]
         if not mesh_file.exists():
-            logger.warning(f"Mesh file {mesh_file} does not exist.")
+            logger.warning(f"<update mesh> Mesh file {mesh_file} does not exist.")
             continue
         
         # 检查文件扩展名
@@ -86,6 +89,7 @@ def collision_to_stl(mjcf_path: str | Path) -> None:
     mesh_dir_path = mjcf_path.parent / compiler.attrib["meshdir"]
     asset = root.find("asset")
     
+    asset_to_add = []
     for geom in root.iter("geom"):
         if geom.attrib.get("type") == "mesh":
             mesh_name = geom.attrib.get("mesh")
@@ -97,8 +101,9 @@ def collision_to_stl(mjcf_path: str | Path) -> None:
                         if not mesh_file.exists():
                             logger.error(f"Mesh file {mesh_file} does not exist.")
                             raise FileNotFoundError(f"Mesh file {mesh_file} does not exist.")
+
                         if Path(mesh_file).suffix.lower() != ".stl":
-                            logger.warning(f"Converting collision mesh {mesh_name} to STL format.")
+                            logger.info(f"Converting collision mesh {mesh_name} to STL format.")
                             # 转换为STL格式
                             stl_file = mesh_file.with_suffix('.stl')
                             if not stl_file.exists():
@@ -107,18 +112,23 @@ def collision_to_stl(mjcf_path: str | Path) -> None:
                                     ms = pymeshlab.MeshSet()
                                     ms.load_new_mesh(str(mesh_file))
                                     ms.save_current_mesh(str(stl_file))
-                                    logger.warning(f"Converted {mesh_file} to {stl_file}")
+                                    logger.info(f"Converted {mesh_file} to {stl_file}")
                                 except Exception as e:
                                     logger.error(f"Error converting {mesh_file} to STL: {e}")
                             # 更新geom的mesh属性
                             geom.attrib["mesh"] = Path(mesh_name).with_suffix('.stl').name
-                            logger.warning(f"Updated geom {geom.attrib.get('name')} to use mesh {stl_file.name}")
+                            logger.info(f"Updated geom {geom.attrib.get('name')} to use mesh {stl_file.name}")
                             # 更新mesh的file属性
-                            mesh.attrib["name"] = Path(mesh_name).with_suffix('.stl').name
-                            mesh.attrib["file"] = str(stl_file.relative_to(mesh_dir_path))
-                            logger.warning(f"Updated mesh {mesh.attrib.get('name')} to file {mesh.attrib.get('file')}")
+                            # mesh.attrib["name"] = Path(mesh_name).with_suffix('.stl').name
+                            # mesh.attrib["file"] = str(stl_file.relative_to(mesh_dir_path))
+                            asset_to_add.append((geom.attrib["mesh"], str(stl_file.relative_to(mesh_dir_path))))
+
+                            logger.info(f"Updated mesh {mesh.attrib.get('name')} to file {mesh.attrib.get('file')}")
                         break
     
+    for a in asset_to_add:
+        asset.append(ET.Element("mesh", name=a[0], file=a[1]))
+
     save_xml(mjcf_path, tree)
 
 def remove_unused_mesh(mjcf_path: str | Path) -> None:
@@ -206,18 +216,18 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
         material_name = material.attrib.get("name")
         
         if material_name not in used_materials:
-            logger.info(f"发现未使用的material: {material_name}")
+            logger.warning(f"发现未使用的material: {material_name}")
             materials_to_remove.append(material)
     
     # 删除未使用的mesh元素
     for mesh in meshes_to_remove:
         asset.remove(mesh)
-        logger.info(f"已删除mesh元素: {mesh.attrib.get('name')}")
+        logger.warning(f"已删除mesh元素: {mesh.attrib.get('name')}")
     
     # 删除未使用的material元素
     for material in materials_to_remove:
         asset.remove(material)
-        logger.info(f"已删除material元素: {material.attrib.get('name')}")
+        logger.warning(f"已删除material元素: {material.attrib.get('name')}")
     
     # 检查mesh目录中的所有mesh文件，删除未被引用的文件
     if mesh_dir_path.exists():
@@ -241,7 +251,7 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
                 relative_path_str = str(relative_path).replace('\\', '/')  # 统一使用正斜杠
                 
                 if relative_path_str not in referenced_files:
-                    logger.info(f"发现未被引用的文件: {relative_path_str}")
+                    logger.warning(f"发现未被引用的文件: {relative_path_str}")
                     mesh_files_to_remove.append(mesh_file_path)
 
     # 删除文件
@@ -271,7 +281,7 @@ def remove_unused_mesh(mjcf_path: str | Path) -> None:
         for file_path in deleted_files:
             logger.info(f"  - {file_path}")
 
-def remove_empty_meshes(mjcf_path: str | Path) -> None:
+def remove_empty_or_invalid_meshes(mjcf_path: str | Path) -> None:
     """检测并移除顶点数为0的空mesh，同时删除worldbody中的引用。
 
     - 遍历`asset/mesh`并读取对应文件
@@ -318,6 +328,7 @@ def remove_empty_meshes(mjcf_path: str | Path) -> None:
             continue
 
         try:
+            ws_path = os.getcwd()
             ms = pymeshlab.MeshSet()
             ms.load_new_mesh(str(mesh_file_path))
             vertices = ms.current_mesh().vertex_matrix()
@@ -332,6 +343,14 @@ def remove_empty_meshes(mjcf_path: str | Path) -> None:
         except Exception as e:
             # 读取失败不等同于空mesh，这里只记录错误
             logger.error(f"读取mesh文件失败 {mesh_file_path}: {e}")
+            os.chdir(ws_path)
+            logger.warning(
+                f"检测到非法mesh: name={mesh_name}, file={mesh_file_attr}. 将从asset和worldbody中删除引用。"
+            )
+            empty_mesh_elements.append(mesh)
+            if mesh_name:
+                empty_mesh_names.add(mesh_name)
+
             continue
 
     if not empty_mesh_elements and not empty_mesh_names:
@@ -369,11 +388,10 @@ def update_mesh(mjcf_path: str | Path, max_vertices: int = 1000000) -> None:
     Args:
         mjcf_path: The path to the MJCF file to process.
     """
-    tree = ET.parse(mjcf_path)
-    root = tree.getroot()
-    update_mesh_assets(mjcf_path, root, max_vertices)
-    remove_empty_meshes(mjcf_path)
+    remove_empty_or_invalid_meshes(mjcf_path)
+    simplify_mesh_assets(mjcf_path, max_vertices)
     collision_to_stl(mjcf_path)
+    exit(0)
     remove_unused_mesh(mjcf_path)
 
 def main() -> None:
