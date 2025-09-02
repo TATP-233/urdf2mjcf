@@ -34,7 +34,7 @@ def update_mesh_assets(mjcf_path: str | Path, root: ET.Element, max_vertices: in
     for mesh in asset.findall("mesh"):
         mesh_file = dir_path / mesh.attrib["file"]
         if not mesh_file.exists():
-            logger.warning(f"Mesh file {mesh.attrib['file']} does not exist.")
+            logger.warning(f"Mesh file {mesh_file} does not exist.")
             continue
         
         # 检查文件扩展名
