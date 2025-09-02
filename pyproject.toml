@@ -34,7 +34,8 @@ dependencies = [
     "pycollada",
     "fast-simplification",
     "pillow",
-    "pymeshlab"
+    "pymeshlab",
+    "tqdm"
 ]
 
 [project.optional-dependencies]
@@ -89,5 +90,6 @@ disallow_untyped_defs = true
 module = [
     "trimesh.*",
     "coacd.*",
+    "OCC.*",
 ]
 ignore_missing_imports = true

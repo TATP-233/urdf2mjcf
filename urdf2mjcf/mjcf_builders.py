@@ -21,6 +21,7 @@ def add_compiler(root: ET.Element) -> None:
     attrib = {
         "angle": "radian",
         "meshdir": ".",
+        "balanceinertia": "true"
         # "eulerseq": "zyx",
         # "autolimits": "true",
     }
@@ -91,7 +92,6 @@ def add_default(
             visual_default,
             "geom",
             attrib={
-                "material": "visualgeom",
                 "contype": "0",
                 "conaffinity": "0",
                 "group": "2",

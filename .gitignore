@@ -2,6 +2,11 @@
 output/
 tests/
 **mjcf/
+**merged_model/
+align_stp/models/**
+*.stp
+*.stl
+*.obj
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

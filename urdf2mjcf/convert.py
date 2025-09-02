@@ -6,6 +6,7 @@ import shutil
 import logging
 import argparse
 import traceback
+import numpy as np
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -313,7 +314,14 @@ def convert_urdf_to_mjcf(
             pos = "0 0 0"
             quat = "1 0 0 0"
 
-        body: ET.Element = ET.Element("body", attrib={"name": link_name, "pos": pos, "quat": quat})
+        body_attrib = {"name": link_name}
+        pos_float = np.array(list(map(float, pos.split())))
+        if not np.allclose(pos_float, [0., 0., 0.]):
+            body_attrib["pos"] = pos
+        quat_float = list(map(float, quat.split()))
+        if not np.allclose(quat_float, [1., 0., 0., 0.]):
+            body_attrib["quat"] = quat
+        body: ET.Element = ET.Element("body", attrib=body_attrib)
 
         # Add joint element if this is not the root and the joint type is not fixed.
         if joint is not None:
@@ -406,7 +414,14 @@ def convert_urdf_to_mjcf(
             name = f"{link_name}_collision"
             if len(collisions) > 1:
                 name = f"{name}_{idx}"
-            collision_geom_attrib: dict[str, str] = {"name": name, "pos": pos_geom, "quat": quat_geom}
+
+            collision_geom_attrib: dict[str, str] = {"name": name}
+            pos_float = np.array(list(map(float, pos_geom.split())))
+            if not np.allclose(pos_float, [0., 0., 0.]):
+                collision_geom_attrib["pos"] = pos_geom
+            quat_float = list(map(float, quat_geom.split()))
+            if not np.allclose(quat_float, [1., 0., 0., 0.]):
+                collision_geom_attrib["quat"] = quat_geom
 
             # Get material from collision element
             collision_geom_elem: ET.Element | None = collision.find("geometry")
@@ -444,7 +459,14 @@ def convert_urdf_to_mjcf(
                     name = f"{link_name}_visual"
                     if len(visuals) > 1:
                         name = f"{name}_{idx}"
-                    visual_geom_attrib: dict[str, str] = {"name": name, "pos": pos_geom, "quat": quat_geom}
+                    visual_geom_attrib: dict[str, str] = {"name": name}
+
+                    pos_float = np.array(list(map(float, pos_geom.split())))
+                    if not np.allclose(pos_float, [0., 0., 0.]):
+                        visual_geom_attrib["pos"] = pos_geom
+                    quat_float = list(map(float, quat_geom.split()))
+                    if not np.allclose(quat_float, [1., 0., 0., 0.]):
+                        visual_geom_attrib["quat"] = quat_geom
                     
                     visual_geom_attrib["type"] = geom.type
                     if geom.type == "mesh" and geom.mesh is not None:
@@ -455,6 +477,7 @@ def convert_urdf_to_mjcf(
                     if geom.scale is not None:
                         visual_geom_attrib["scale"] = geom.scale
                 else:
+                    logger.warning(f"No geometry element link_name={link_name}, use default attribute.")
                     # No geometry element
                     name = f"{link_name}_visual"
                     if len(visuals) > 1:
@@ -684,35 +707,14 @@ def convert_urdf_to_mjcf(
             ET.SubElement(equality_elem, "joint", attrib=joint_attrib)
             logger.info(f"Added equality constraint: {mimicking_joint} = {offset} + {multiplier} * {mimicked_joint}")
 
-    # Add mesh assets to the asset section before saving
-    asset_elem: ET.Element | None = mjcf_root.find("asset")
-    if asset_elem is None:
-        asset_elem = ET.SubElement(mjcf_root, "asset")
-    for mesh_name, filename in mesh_assets.items():
-        # Clean up package:// paths to relative paths
-        if 'package://' in filename:
-            # Extract the relative path after package name
-            package_path = filename[len('package://'):]
-            parts = package_path.split('/')
-            if len(parts) > 1:
-                # Remove the package name part, keep the rest as relative path
-                relative_path = '/'.join(parts[1:])
-                filename = relative_path
-        elif filename.startswith('/'):
-            filename = os.path.relpath(filename, urdf_dir)
-
-        # mesh_name already should be the stem (without .obj), 
-        # so it will match the geom references
-        ET.SubElement(asset_elem, "mesh", attrib={"name": mesh_name, "file": filename})
-
-    add_contact(mjcf_root, robot)
+    # add_contact(mjcf_root, robot)
 
     # Add weld constraints if specified in metadata
     add_weld_constraints(mjcf_root, metadata)
 
     # Copy mesh files with special handling for OBJ files
     processed_files = set()
-    
+    non_existing_meshes = set()
     for mesh_name, filename in mesh_assets.items():
         # Determine source path based on whether it's a package:// URL or regular path
         source_path: Path | None = None
@@ -740,8 +742,9 @@ def convert_urdf_to_mjcf(
             source_path = (urdf_dir / filename).resolve()
 
         if source_path and not source_path.exists():
-            logger.error(f"Mesh file not found: {source_path} (from URDF path: {filename})")
-            raise FileNotFoundError(f"Mesh file not found: {source_path} (from URDF path: {filename})")
+            logger.error(f"Mesh file not found: {filename}")
+            non_existing_meshes.add(mesh_name)
+            continue
 
         target_path = target_mesh_dir / sub_path
         # Copy the file if source exists and target is valid
@@ -764,6 +767,47 @@ def convert_urdf_to_mjcf(
         elif source_path:
             logger.warning(f"Mesh file not found: {source_path}")
 
+    if len(non_existing_meshes):
+        print(f"Remove non-existent mesh files from mesh_assets: {len(non_existing_meshes)}")
+        print(non_existing_meshes)
+        for mesh_name in non_existing_meshes:
+            del mesh_assets[mesh_name]
+        
+        geom_mesh_to_remove = []
+        for geom in mjcf_root.iter("geom"):
+            mesh_name = geom.attrib.get("mesh")
+            if mesh_name and mesh_name in non_existing_meshes:
+                geom_mesh_to_remove.append(geom)
+        # 修复：mjcf_root.remove(geom) 只适用于直接子元素，嵌套需找到 parent
+        def remove_geoms_from_tree(root, geoms_to_remove):
+            parent_map = {c: p for p in root.iter() for c in p}
+            for geom in geoms_to_remove:
+                parent = parent_map.get(geom)
+                if parent is not None:
+                    parent.remove(geom)
+        remove_geoms_from_tree(mjcf_root, geom_mesh_to_remove)
+
+    # Add mesh assets to the asset section before saving
+    asset_elem: ET.Element | None = mjcf_root.find("asset")
+    if asset_elem is None:
+        asset_elem = ET.SubElement(mjcf_root, "asset")
+    for mesh_name, filename in mesh_assets.items():
+        # Clean up package:// paths to relative paths
+        if 'package://' in filename:
+            # Extract the relative path after package name
+            package_path = filename[len('package://'):]
+            parts = package_path.split('/')
+            if len(parts) > 1:
+                # Remove the package name part, keep the rest as relative path
+                relative_path = '/'.join(parts[1:])
+                filename = relative_path
+        elif filename.startswith('/'):
+            filename = os.path.relpath(filename, urdf_dir)
+
+        # mesh_name already should be the stem (without .obj), 
+        # so it will match the geom references
+        ET.SubElement(asset_elem, "mesh", attrib={"name": mesh_name, "file": filename})
+
     # Save the initial MJCF file
     print(f"Saving initial MJCF file to {mjcf_path}")
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
@@ -777,7 +821,7 @@ def convert_urdf_to_mjcf(
         split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
         print(f"Checking shell meshes...")
         check_shell_meshes(mjcf_path)
-
+    print("Updating meshes...")
     update_mesh(mjcf_path, max_vertices)
 
     # Apply post-processing steps
