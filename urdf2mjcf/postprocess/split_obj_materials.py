@@ -205,6 +205,7 @@ def split_obj_by_materials(mjcf_path: str | Path) -> None:
             except Exception as e:
                 logger.error(f"Failed to convert DAE file {dae_file_path}: {e}")
                 continue
+
         # 直接读取mjcf文件，不使用tree，将所有的".dae"替换为".obj"
         with open(mjcf_path, "r") as f:
             mjcf_content = f.read()
