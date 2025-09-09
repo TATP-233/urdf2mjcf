@@ -48,7 +48,7 @@ urdf2mjcf <urdf_path> [options]
 - `--no-convex-decompose`: Disable mesh convex decomposition processing
 - `--collision-type`: Collision type(mesh, convex decomposition, convex hull)
 - `--log-level`: Logging level (default: INFO level)
-- `--max-vertices`: Maximum number of vertices in the mesh (default: 1000000)
+- `--max-vertices`: Maximum number of vertices in the mesh (default: 200000)
 
 #### Metadata Files Description
 - **metadata**: Main conversion configuration file, contains height offset, angle units, whether to add floor, etc.

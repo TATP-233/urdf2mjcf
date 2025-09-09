@@ -918,7 +918,7 @@ def main() -> None:
     parser.add_argument(
         "--max-vertices",
         type=int,
-        default=1000000,
+        default=200000,
         help="Maximum number of vertices in the mesh.",
     )
     args = parser.parse_args()
