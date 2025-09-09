@@ -178,10 +178,10 @@ def convex_decomposition_assets(mjcf_path: str | Path, root: ET.Element, max_pro
     # 更新 asset 部分
     for mesh_name, part_info in new_mesh_parts.items():
         # 删除原始 mesh
-        for mesh in asset.findall("mesh"):
-            if mesh.attrib["name"] == mesh_name:
-                asset.remove(mesh)
-                break
+        # for mesh in asset.findall("mesh"):
+        #     if mesh.attrib["name"] == mesh_name:
+        #         asset.remove(mesh)
+        #         break
         
         # 添加新的 part meshes
         for part_name, part_file in part_info:

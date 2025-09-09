@@ -16,6 +16,7 @@ from urdf2mjcf.postprocess.add_backlash import add_backlash
 from urdf2mjcf.postprocess.add_floor import add_floor
 from urdf2mjcf.postprocess.add_light import add_light
 from urdf2mjcf.postprocess.update_mesh import update_mesh
+from urdf2mjcf.postprocess.convex_collision import convex_collision
 from urdf2mjcf.postprocess.convex_decomposition import convex_decomposition
 from urdf2mjcf.postprocess.split_obj_materials import split_obj_by_materials
 from urdf2mjcf.postprocess.base_joint import fix_base_joint
@@ -76,7 +77,7 @@ def convert_urdf_to_mjcf(
     appendix_files: list[Path] | None = None,
     max_vertices: int = 1000000,
     collision_only: bool = False,
-    convex_decompose: bool = True
+    collision_type: bool = True
 ) -> None:
     """Converts a URDF file to an MJCF file.
 
@@ -89,7 +90,7 @@ def convert_urdf_to_mjcf(
         appendix_files: Optional list of appendix files.
         max_vertices: Maximum number of vertices in the mesh.
         collision_only: If true, use simplified collision geometry without visual appearance for visual representation.
-        convex_decompose: If true, run convex decomposition on the mesh.
+        collision_type: The type of collision geometry to use.
     """
     urdf_path = Path(urdf_path)
     mjcf_path = Path(mjcf_path) if mjcf_path is not None else urdf_path.with_suffix(".mjcf")
@@ -813,9 +814,13 @@ def convert_urdf_to_mjcf(
     save_xml(mjcf_path, ET.ElementTree(mjcf_root))
     print(f"Added light...")
     add_light(mjcf_path)
-    if convex_decompose:
+    if collision_type == "decomposition":
         print(f"Convex decomposition...")
         convex_decomposition(mjcf_path)
+    elif collision_type == "convex_hull":
+        print(f"Convex hull generation...")
+        convex_collision(mjcf_path)
+
     if not collision_only:
         print(f"Split OBJ files by materials...")
         split_obj_by_materials(mjcf_path)  # Split OBJ files by materials
@@ -871,9 +876,11 @@ def main() -> None:
         help="If true, use collision geometry without visual appearance for visual representation."
     )
     parser.add_argument(
-        "--no-convex-decompose",
-        action="store_true", 
-        help="If true, do not run convex decomposition on the mesh."
+        "-cp", "--collision-type",
+        type=str,
+        # 保持原样mesh，进行凸分解，进行凸包络
+        choices=["mesh", "decomposition", "convex_hull"],
+        help="The type of collision geometry to use."
     )
     parser.add_argument(
         "-m", "--metadata",
@@ -962,7 +969,7 @@ def main() -> None:
         appendix_files=[Path(appendix_file) for appendix_file in args.appendix] if args.appendix is not None and len(args.appendix) > 0 else None,
         max_vertices=args.max_vertices,
         collision_only=args.collision_only,
-        convex_decompose=not args.no_convex_decompose
+        collision_type=args.collision_type
     )
 
 if __name__ == "__main__":

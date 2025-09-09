@@ -46,6 +46,7 @@ urdf2mjcf <urdf_path> [options]
 - `-a, --appendix`: Appendix XML files, multiple files can be specified and applied in order
 - `--collision-only`: Use collision geometry only without visual appearance for visual representation
 - `--no-convex-decompose`: Disable mesh convex decomposition processing
+- `--collision-type`: Collision type(mesh, convex decomposition, convex hull)
 - `--log-level`: Logging level (default: INFO level)
 - `--max-vertices`: Maximum number of vertices in the mesh (default: 1000000)
 
@@ -65,8 +66,7 @@ urdf2mjcf piper.urdf \
   -m metadata/metadata.json \
   -am metadata/actuator.json \
   -dm metadata/default.json \
-  -a metadata/appendix.xml \
-  --no-convex-decompose
+  -a metadata/appendix.xml
 # View the generated model
 python -m mujoco.viewer --mjcf=mjcf/piper.xml
 
@@ -77,8 +77,7 @@ urdf2mjcf rm65b_eg24c2_description.urdf \
   -m metadata/metadata.json \
   -am metadata/actuator.json \
   -dm metadata/default.json \
-  -a metadata/appendix.xml \
-  --no-convex-decompose
+  -a metadata/appendix.xml
 # View the generated model
 python -m mujoco.viewer --mjcf=mjcf/rm65.xml
 ```

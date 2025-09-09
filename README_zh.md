@@ -43,7 +43,7 @@ urdf2mjcf <urdf_path> [options]
 - `-am, --actuator-metadata`: 执行器元数据JSON文件，可指定多个文件，后面的文件会覆盖前面的设置
 - `-a, --appendix`: 附加XML文件，可指定多个文件，按顺序应用
 - `--collision-only`: 仅使用碰撞几何体而不显示视觉外观
-- `--no-convex-decompose`: 禁用网格凸分解处理
+- `--collision-type`: 使用碰撞类型（原样mesh，凸分解，凸包络）
 - `--log-level`: 日志级别 (默认: INFO级别)
 - `--max-vertices`: 网格中的最大顶点数量 (默认: 1000000)
 
@@ -63,8 +63,7 @@ urdf2mjcf piper.urdf \
   -m metadata/metadata.json \
   -am metadata/actuator.json \
   -dm metadata/default.json \
-  -a metadata/appendix.xml \
-  --no-convex-decompose
+  -a metadata/appendix.xml
 # 查看生成的模型
 python -m mujoco.viewer --mjcf=mjcf/piper.xml
 
@@ -75,8 +74,7 @@ urdf2mjcf rm65b_eg24c2_description.urdf \
   -m metadata/metadata.json \
   -am metadata/actuator.json \
   -dm metadata/default.json \
-  -a metadata/appendix.xml \
-  --no-convex-decompose
+  -a metadata/appendix.xml
 # 查看生成的模型
 python -m mujoco.viewer --mjcf=mjcf/rm65.xml
 ```
