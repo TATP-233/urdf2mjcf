@@ -118,9 +118,9 @@ def process_obj_materials(obj_file: Path) -> dict[str, Material]:
                     geom.visual.material.name = material_name
                     geom.export(submesh_name.as_posix(), include_texture=True, header=None)
                     logger.info(f"Saved submesh: {submesh_name.name} (material: {material_name})")
-            #     os.remove(obj_target_dir / "material.mtl")
-            # os.remove(mtl_file)
-            # os.remove(obj_file)
+                os.remove(obj_target_dir / "material.mtl")
+            os.remove(mtl_file)
+            os.remove(obj_file)
 
         except ImportError:
             logger.warning("trimesh not available, cannot split OBJ by materials")

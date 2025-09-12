@@ -324,14 +324,91 @@ def split_and_export(
 
     return results
 
+def _deduce_output_path(out_spec: Path, input_stem: str, export_format: str) -> Path:
+    """根据输出参数推断最终文件路径。
+
+    规则：
+    - 若 out_spec 存在且为目录，则输出到目录下 input_stem.ext
+    - 若 out_spec 后缀是支持格式之一(.stl/.obj/.stp)，则视为文件路径
+    - 否则将 out_spec 当作目录，最终输出到 out_spec/input_stem.ext
+    """
+    ext = "." + export_format.lower()
+    supported = {".stl", ".obj", ".stp", ".step"}
+    if out_spec.exists() and out_spec.is_dir():
+        out_spec.mkdir(parents=True, exist_ok=True)
+        return out_spec / f"{input_stem}{ext}"
+    # 不存在时，根据是否带已知后缀判断
+    if out_spec.suffix.lower() in supported:
+        # 若用户写了 .step 也强制改为目标后缀
+        return out_spec.with_suffix(ext)
+    # 作为目录
+    out_spec.mkdir(parents=True, exist_ok=True)
+    return out_spec / f"{input_stem}{ext}"
+
+def convert_whole(
+    step_file: Path,
+    out_spec: Path,
+    export_format: str = "stl",
+    linear_deflection: float = 0.2,
+    angular_deflection_deg: float = 20.0,
+    relative: bool = True,
+    scale_factor: float = 1.0,
+) -> Path:
+    """整模直接转换为单一文件。
+
+    返回最终导出文件路径。
+    """
+    _ensure_occ_available()
+
+    step_file = step_file.resolve()
+    shape = _read_step_one_shape(step_file)
+
+    # 计算整体 AABB（可选，便于日志观察），基于缩放后的副本
+    if abs(scale_factor - 1.0) > 1e-15:
+        scaled_for_aabb = _scale_shape(shape, scale_factor)
+    else:
+        scaled_for_aabb = shape
+    global_min, global_max = _compute_shape_aabb(scaled_for_aabb)
+    print(
+        f"整体模型 AABB (m): min=({global_min[0]:.6g}, {global_min[1]:.6g}, {global_min[2]:.6g}) "
+        f"max=({global_max[0]:.6g}, {global_max[1]:.6g}, {global_max[2]:.6g})"
+    )
+
+    # 若需要缩放，应用到整形体
+    if abs(scale_factor - 1.0) > 1e-15:
+        shape = _scale_shape(shape, scale_factor)
+
+    # 推断输出文件路径
+    output_path = _deduce_output_path(Path(out_spec), step_file.stem, export_format)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    angular_deflection_rad = math.radians(angular_deflection_deg)
+    fmt = export_format.lower()
+    if fmt == "stl":
+        _mesh_shape(shape, linear_deflection, angular_deflection_rad, relative)
+        _export_stl(shape, output_path)
+    elif fmt == "obj":
+        _mesh_shape(shape, linear_deflection, angular_deflection_rad, relative)
+        _export_obj(shape, output_path)
+    elif fmt == "stp":
+        _export_step(shape, output_path)
+    else:
+        raise ValueError("export_format 应为 'stl' | 'obj' | 'stp'")
+
+    print(f"已导出整模: {output_path}")
+    return output_path
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="读取STEP(.stp/.step)文件，将所有零件拆分并导出为STL/OBJ，并输出整体 AABB。"
+        description=(
+            "读取 STEP(.stp/.step) 文件。默认仅进行文件格式转换，导出为 -f 指定格式的一个完整模型文件；"
+            "若指定 --split 则将所有零件拆分并分别导出，并输出整体 AABB。"
+        )
     )
     parser.add_argument("input", type=str, help="输入STEP文件路径(.stp/.step)")
     parser.add_argument(
         "output", type=str, nargs='?', default="./output_parts", 
-        help="输出目录或模型路径（默认: ./output_parts)"
+        help="输出目录或模型路径（不拆分时为文件路径；默认: ./output_parts)"
     )
     parser.add_argument(
         "-f",
@@ -340,6 +417,11 @@ def parse_args() -> argparse.Namespace:
         choices=["stl", "obj", "stp"],
         default="stl",
         help="导出格式（stl/obj/stp，默认: stl）",
+    )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help="启用拆分：将零件分别导出；未指定时仅进行整模格式转换导出单文件",
     )
     parser.add_argument(
         "--linear-deflection",
@@ -379,7 +461,7 @@ def main() -> int:
         print(f"输入文件不存在: {step_path}", file=sys.stderr)
         return 2
     
-    out_dir = Path(ns.output)
+    out_spec = Path(ns.output)
 
     # 单位检测
     unit_found, unit_scale, unit_desc = _detect_step_unit(step_path)
@@ -397,21 +479,34 @@ def main() -> int:
             print("未检测到单位信息，未提供 --scale，假定已为米。")
 
     try:
-        results = split_and_export(
-            step_file=step_path,
-            out_dir=out_dir,
-            export_format=ns.format,
-            linear_deflection=ns.linear_deflection,
-            angular_deflection_deg=ns.angular_deflection_deg,
-            relative=not ns.absolute,
-            max_workers=ns.max_workers,
-            scale_factor=applied_scale,
-        )
+        if ns.split:
+            out_dir = out_spec if out_spec.suffix.lower() == '' else out_spec.parent
+            results = split_and_export(
+                step_file=step_path,
+                out_dir=out_dir,
+                export_format=ns.format,
+                linear_deflection=ns.linear_deflection,
+                angular_deflection_deg=ns.angular_deflection_deg,
+                relative=not ns.absolute,
+                max_workers=ns.max_workers,
+                scale_factor=applied_scale,
+            )
+            print(f"已导出 {len(results)} 个零件至: {out_dir}")
+        else:
+            output_file = convert_whole(
+                step_file=step_path,
+                out_spec=out_spec,
+                export_format=ns.format,
+                linear_deflection=ns.linear_deflection,
+                angular_deflection_deg=ns.angular_deflection_deg,
+                relative=not ns.absolute,
+                scale_factor=applied_scale,
+            )
+            print(f"输出文件: {output_file}")
     except Exception as exc:
         print(f"处理失败：{exc}", file=sys.stderr)
         return 1
 
-    print(f"已导出 {len(results)} 个零件至: {out_dir}")
     return 0
 
 
